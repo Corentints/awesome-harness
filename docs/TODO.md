@@ -11,10 +11,10 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Implémenter `SessionSource` et l'adaptateur Claude sur fixtures.
 - [x] Implémenter `SessionSource` et l'adaptateur Codex sur fixtures.
 - [x] Lire les JSONL en streaming et tolérer les événements inconnus.
-- [ ] Détecter le dépôt courant et associer les sessions au projet.
-- [ ] Extraire des segments avec les marqueurs de correction français et anglais.
-- [ ] Regrouper les corrections répétées sans LLM pour le premier rapport.
-- [ ] Ajouter `agentctx mistakes` avec occurrences et références de preuves.
+- [x] Détecter le dépôt courant et associer les sessions au projet.
+- [x] Extraire des segments avec les marqueurs de correction français et anglais.
+- [x] Regrouper les corrections répétées sans LLM pour le premier rapport.
+- [x] Ajouter `agentctx mistakes` avec occurrences et références de preuves.
 - [ ] Tester le prototype sur un historique réel sans publier ses données.
 - [ ] Consigner les vrais positifs, faux positifs et signaux manquants.
 
