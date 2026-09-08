@@ -87,8 +87,8 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [ ] Exécuter les variantes sans contexte, contexte actuel et contexte compilé.
 - [ ] Mesurer réussite, corrections, violations, tokens, tours et durée.
 - [ ] Calibrer le classement des règles à partir de ces résultats.
-- [ ] Implémenter la sélection sous budget de tokens.
-- [ ] Implémenter `agentctx optimize` avec rapport avant/après.
+- [x] Implémenter la sélection sous budget de tokens.
+- [x] Implémenter `agentctx optimize` avec rapport avant/après.
 
 ## P2 — préparation V1
 

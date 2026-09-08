@@ -6,6 +6,7 @@ use agentctx::{
     domain::NormalizedSession,
     ingest::{ClaudeSessionSource, CodexSessionSource, SessionSource},
     llm::{CodexCliProvider, InferenceProvider, InferenceSegment, batches, infer_redacted},
+    optimize,
     privacy::Redactor,
     project::Project,
     render::{ClaudeRenderer, CodexRenderer, Renderer},
@@ -46,6 +47,8 @@ enum Command {
     Apply(ApplyArgs),
     /// Diagnose conflicts, stale rules and repository drift.
     Doctor(OutputArgs),
+    /// Report deterministic context selection under the configured token budget.
+    Optimize(OutputArgs),
 }
 
 #[derive(Debug, Args)]
@@ -165,7 +168,28 @@ fn main() -> Result<()> {
         Some(Command::Diff(arguments)) => diff(&arguments)?,
         Some(Command::Apply(arguments)) => apply(&arguments)?,
         Some(Command::Doctor(arguments)) => doctor(&arguments)?,
+        Some(Command::Optimize(arguments)) => optimize(&arguments)?,
         None => println!("Run `agentctx --help` to get started."),
+    }
+    Ok(())
+}
+
+fn optimize(arguments: &OutputArgs) -> Result<()> {
+    let project = Project::detect(&arguments.project).context("could not detect project")?;
+    let config = Config::load(default_user_config_path().as_deref(), &project.root)?;
+    let database = Database::open(&database_path(&project, arguments.database.as_deref()))?;
+    let selection = optimize::select_under_budget(
+        &database.accepted_candidates()?,
+        config.analysis.max_context_tokens,
+    );
+    println!("Context optimization preview");
+    println!("  Budget: {} tokens", config.analysis.max_context_tokens);
+    println!("  Before: {} estimated tokens", selection.tokens_before);
+    println!("  After: {} estimated tokens", selection.tokens_after);
+    println!("  Selected rules: {}", selection.selected.len());
+    println!("  Omitted rules: {}", selection.omitted.len());
+    for rule in selection.omitted {
+        println!("    - {} ({})", rule.canonical_text, rule.id);
     }
     Ok(())
 }
@@ -227,7 +251,12 @@ fn compile_plans(
     database_override: Option<&Path>,
 ) -> Result<Vec<PlannedArtifact>> {
     let database = Database::open(&database_path(project, database_override))?;
-    let rules = database.accepted_candidates()?;
+    let config = Config::load(default_user_config_path().as_deref(), &project.root)?;
+    let selection = optimize::select_under_budget(
+        &database.accepted_candidates()?,
+        config.analysis.max_context_tokens,
+    );
+    let rules = selection.selected;
     let artifacts = ClaudeRenderer
         .render(project, &rules)
         .into_iter()

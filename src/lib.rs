@@ -5,6 +5,7 @@ pub mod doctor;
 pub mod domain;
 pub mod ingest;
 pub mod llm;
+pub mod optimize;
 pub mod privacy;
 pub mod project;
 pub mod render;
