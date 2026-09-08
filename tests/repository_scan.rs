@@ -36,5 +36,6 @@ fn scans_deterministic_facts_from_tracked_files() {
     assert_eq!(facts.test_tools, ["vitest"]);
     assert_eq!(facts.commands, ["pnpm test"]);
     assert_eq!(facts.instructions, [std::path::PathBuf::from("AGENTS.md")]);
+    assert_eq!(facts.instruction_contents[0].content, "# Instructions");
     assert_eq!(facts.generated_paths, ["dist/", ".env"]);
 }

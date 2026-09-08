@@ -20,10 +20,29 @@ pub struct PlannedArtifact {
 /// # Errors
 ///
 /// Returns an error when markers are incomplete, nested, or duplicated.
-pub fn plan(artifacts: &[Artifact]) -> Result<Vec<PlannedArtifact>, ArtifactError> {
+pub fn plan(
+    project_root: &Path,
+    artifacts: &[Artifact],
+) -> Result<Vec<PlannedArtifact>, ArtifactError> {
     artifacts
         .iter()
         .map(|artifact| {
+            let is_allowed_name = matches!(
+                artifact.path.file_name().and_then(|name| name.to_str()),
+                Some("AGENTS.md" | "CLAUDE.md")
+            );
+            if artifact.path.parent() != Some(project_root) || !is_allowed_name {
+                return Err(ArtifactError::UnsafeTarget {
+                    path: artifact.path.clone(),
+                });
+            }
+            if let Ok(metadata) = fs::symlink_metadata(&artifact.path)
+                && metadata.file_type().is_symlink()
+            {
+                return Err(ArtifactError::UnsafeTarget {
+                    path: artifact.path.clone(),
+                });
+            }
             let original = match fs::read_to_string(&artifact.path) {
                 Ok(content) => Some(content),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -144,6 +163,8 @@ pub enum ArtifactError {
     InvalidMarkers,
     #[error("{path} changed after the diff was computed")]
     ConcurrentChange { path: PathBuf },
+    #[error("refusing to write unsafe instruction target {path}")]
+    UnsafeTarget { path: PathBuf },
     #[error("filesystem error for {path}: {source}")]
     Io {
         path: PathBuf,
@@ -174,6 +195,57 @@ mod tests {
         assert!(matches!(
             merge_managed(START_MARKER, "new"),
             Err(ArtifactError::InvalidMarkers)
+        ));
+    }
+
+    #[test]
+    fn rejects_artifacts_outside_the_project_root() {
+        let artifact = Artifact {
+            path: PathBuf::from("/outside/AGENTS.md"),
+            managed_section: "rules".to_owned(),
+        };
+        assert!(matches!(
+            plan(Path::new("/repo"), &[artifact]),
+            Err(ArtifactError::UnsafeTarget { .. })
+        ));
+    }
+
+    #[test]
+    fn detects_a_change_between_plan_and_apply() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("AGENTS.md");
+        fs::write(&path, "before\n").expect("initial file");
+        let artifact = Artifact {
+            path: path.clone(),
+            managed_section: "rules".to_owned(),
+        };
+        let plans = plan(directory.path(), &[artifact]).expect("plan");
+        fs::write(&path, "changed\n").expect("concurrent edit");
+
+        assert!(matches!(
+            apply(&plans),
+            Err(ArtifactError::ConcurrentChange { .. })
+        ));
+        assert_eq!(fs::read_to_string(path).expect("content"), "changed\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_symlink_target() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("temp directory");
+        let outside = tempfile::NamedTempFile::new().expect("outside file");
+        let target = directory.path().join("AGENTS.md");
+        symlink(outside.path(), &target).expect("symlink");
+        let artifact = Artifact {
+            path: target,
+            managed_section: "rules".to_owned(),
+        };
+
+        assert!(matches!(
+            plan(directory.path(), &[artifact]),
+            Err(ArtifactError::UnsafeTarget { .. })
         ));
     }
 }

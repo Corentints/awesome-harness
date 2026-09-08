@@ -24,7 +24,7 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Implémenter `agentctx init` et la détection des sources disponibles.
 - [x] Scanner les fichiers suivis par Git avec la crate `ignore`.
 - [x] Extraire package manager, commandes, outils de test et dossiers générés.
-- [ ] Importer `AGENTS.md`, `CLAUDE.md` et `.claude/**` existants.
+- [x] Importer `AGENTS.md`, `CLAUDE.md` et `.claude/**` existants.
 - [x] Concevoir le schéma SQLite et les migrations initiales.
 - [x] Stocker les références, hashes et versions de parseur pour l'indexation incrémentale.
 - [x] Persister candidats, preuves et décisions de revue.
@@ -33,8 +33,8 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Implémenter un faux provider déterministe pour les tests.
 - [x] Implémenter le premier provider CLI choisi.
 - [x] Batcher uniquement les segments retenus par les filtres.
-- [ ] Canonicaliser et dédupliquer les règles proposées.
-- [ ] Implémenter un premier score explicable et borné.
+- [x] Canonicaliser et dédupliquer les règles proposées.
+- [x] Implémenter un premier score explicable et borné.
 - [x] Ajouter `agentctx analyze` avec résumé des données traitées.
 - [x] Ajouter `agentctx review` avec accepter, rejeter, éditer et changer le scope.
 - [x] Mémoriser les rejets pour éviter les propositions identiques répétées.
@@ -48,15 +48,15 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 
 ## P0 — confidentialité et robustesse
 
-- [ ] Définir le modèle de menace et les données susceptibles de quitter la machine.
+- [x] Définir le modèle de menace et les données susceptibles de quitter la machine.
 - [x] Implémenter la redaction des formats de secrets connus.
-- [ ] Ajouter la détection prudente des chaînes à forte entropie.
-- [ ] Garantir l'opt-in pour toute inférence distante.
-- [ ] Afficher le provider et le volume de contenu avant envoi.
+- [x] Ajouter la détection prudente des chaînes à forte entropie.
+- [x] Garantir l'opt-in pour toute inférence distante.
+- [x] Afficher le provider et le volume de contenu avant envoi.
 - [x] Tester qu'aucun secret synthétique n'atteint le faux provider distant.
 - [x] Échapper les contenus de sessions afin qu'ils restent des données non fiables.
-- [ ] Refuser les artefacts dont le chemin sort des cibles autorisées.
-- [ ] Tester les symlinks et changements de fichiers entre `diff` et `apply`.
+- [x] Refuser les artefacts dont le chemin sort des cibles autorisées.
+- [x] Tester les symlinks et changements de fichiers entre `diff` et `apply`.
 - [ ] Vérifier que les logs ne contiennent ni secrets ni extraits complets.
 
 ## P1 — V0.2 maintenance
@@ -113,9 +113,9 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 ## Définition de « terminé » pour la V0.1
 
 - [ ] Installation locale documentée sur les plateformes retenues.
-- [ ] Parcours `init → analyze → review → diff → apply` testé de bout en bout.
-- [ ] Chaque règle appliquée possède une preuve consultable via `explain`.
-- [ ] Réanalyse incrémentale déterministe et décisions préservées.
-- [ ] Aucune sortie distante sans opt-in et suite de redaction verte.
-- [ ] Aucune perte de contenu utilisateur lors de l'application.
+- [x] Parcours `init → analyze → review → diff → apply` testé de bout en bout.
+- [x] Chaque règle appliquée possède une preuve consultable via `explain`.
+- [x] Réanalyse incrémentale déterministe et décisions préservées.
+- [x] Aucune sortie distante sans opt-in et suite de redaction verte.
+- [x] Aucune perte de contenu utilisateur lors de l'application.
 - [ ] Résultats utiles confirmés sur au moins un historique réel.

@@ -16,6 +16,13 @@ pub struct RepositoryFacts {
     pub commands: Vec<String>,
     pub generated_paths: Vec<String>,
     pub instructions: Vec<PathBuf>,
+    pub instruction_contents: Vec<ExistingInstruction>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExistingInstruction {
+    pub path: PathBuf,
+    pub content: String,
 }
 
 /// Collects deterministic facts from a Git project without invoking an LLM.
@@ -36,6 +43,19 @@ pub fn scan(project: &Project) -> Result<RepositoryFacts, RepositoryError> {
         .filter(|path| is_instruction(path))
         .cloned()
         .collect();
+    facts.instruction_contents = facts
+        .instructions
+        .iter()
+        .map(|relative_path| {
+            let path = project.root.join(relative_path);
+            fs::read_to_string(&path)
+                .map(|content| ExistingInstruction {
+                    path: relative_path.clone(),
+                    content,
+                })
+                .map_err(|source| RepositoryError::Io { path, source })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     inspect_package_json(project, &mut facts)?;
     let tracked_files = facts.tracked_files.clone();
     detect_from_paths(&tracked_files, &mut facts);

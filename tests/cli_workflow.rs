@@ -37,6 +37,21 @@ fn runs_the_local_workflow_without_losing_existing_instructions() {
     write_session(&sessions.join("two.jsonl"), root, "two");
     let database = root.join("state/state.db");
 
+    let blocked = run(
+        root,
+        &[
+            "analyze",
+            "--claude-root",
+            path(&sessions),
+            "--database",
+            path(&database),
+            "--provider",
+            "codex-cli",
+        ],
+    );
+    assert!(!blocked.status.success());
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("allow_remote_inference = true"));
+
     let analysis = run(
         root,
         &[
@@ -68,6 +83,10 @@ fn runs_the_local_workflow_without_losing_existing_instructions() {
         "{}",
         String::from_utf8_lossy(&decision.stderr)
     );
+    let explanation = run(root, &["explain", id, "--database", path(&database)]);
+    let explanation = String::from_utf8_lossy(&explanation.stdout);
+    assert!(explanation.contains("Evidence:"));
+    assert!(explanation.contains("session one"));
     let preview = run(root, &["diff", "--database", path(&database)]);
     assert!(String::from_utf8_lossy(&preview.stdout).contains("Always use pnpm."));
 

@@ -1,9 +1,11 @@
 use agentctx::{
-    analysis::find_corrections,
+    analysis::{find_corrections, score_candidate},
     artifacts::{self, PlannedArtifact},
     config::{Config, default_user_config_path},
     domain::NormalizedSession,
     ingest::{ClaudeSessionSource, CodexSessionSource, SessionSource},
+    llm::{CodexCliProvider, InferenceProvider, InferenceSegment, batches, infer_redacted},
+    privacy::Redactor,
     project::Project,
     render::{ClaudeRenderer, CodexRenderer, Renderer},
     repository,
@@ -76,6 +78,12 @@ struct AnalyzeArgs {
     project: PathBuf,
     #[arg(long)]
     database: Option<PathBuf>,
+    /// Semantic inference provider (`none` or `codex-cli`).
+    #[arg(long)]
+    provider: Option<String>,
+    /// Maximum number of filtered segments sent in one inference request.
+    #[arg(long, default_value_t = 50)]
+    batch_size: usize,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -190,11 +198,21 @@ fn compile_plans(
         ClaudeRenderer.render(project, &rules),
         CodexRenderer.render(project, &rules),
     ];
-    Ok(artifacts::plan(&artifacts)?)
+    Ok(artifacts::plan(&project.root, &artifacts)?)
 }
 
 fn analyze(arguments: &AnalyzeArgs) -> Result<()> {
     let project = Project::detect(&arguments.project).context("could not detect project")?;
+    let config = Config::load(default_user_config_path().as_deref(), &project.root)?;
+    let provider_name = arguments
+        .provider
+        .as_deref()
+        .unwrap_or(&config.llm.provider);
+    if provider_name != "none" && !config.privacy.allow_remote_inference {
+        anyhow::bail!(
+            "provider {provider_name} may send data remotely; set privacy.allow_remote_inference = true explicitly"
+        );
+    }
     let facts = repository::scan(&project)?;
     let mut database = Database::open(&database_path(&project, arguments.database.as_deref()))?;
     let roots = analysis_roots(arguments);
@@ -216,6 +234,52 @@ fn analyze(arguments: &AnalyzeArgs) -> Result<()> {
     println!("  Processed sessions: {processed}");
     println!("  Unchanged sessions: {skipped}");
     println!("  Candidate rules: {}", candidates.len());
+    if provider_name != "none" {
+        run_semantic_inference(provider_name, &project, &candidates, arguments.batch_size)?;
+    }
+    Ok(())
+}
+
+fn run_semantic_inference(
+    provider_name: &str,
+    project: &Project,
+    candidates: &[agentctx::analysis::CorrectionCandidate],
+    batch_size: usize,
+) -> Result<()> {
+    let provider: Box<dyn InferenceProvider> = match provider_name {
+        "codex-cli" => Box::new(CodexCliProvider::new(&project.root)),
+        other => anyhow::bail!("unknown inference provider: {other}"),
+    };
+    let segments = candidates
+        .iter()
+        .flat_map(|candidate| &candidate.evidence)
+        .map(|evidence| InferenceSegment {
+            message_id: evidence.message_id.clone(),
+            text: evidence.user_text.clone(),
+        })
+        .collect::<Vec<_>>();
+    let character_count = segments
+        .iter()
+        .map(|segment| segment.text.len())
+        .sum::<usize>();
+    println!(
+        "  Provider: {provider_name} ({} filtered segments, {character_count} characters before redaction)",
+        segments.len()
+    );
+    let mut redactor = Redactor::new();
+    let mut inferred = Vec::new();
+    for request in batches(&segments, batch_size) {
+        inferred.extend(infer_redacted(provider.as_ref(), &request, &mut redactor)?.rules);
+    }
+    println!("  Redacted values: {}", redactor.replacement_count());
+    println!("  Semantic suggestions: {}", inferred.len());
+    for rule in inferred {
+        println!(
+            "    - {} ({:.0}% confidence)",
+            rule.text,
+            rule.confidence * 100.0
+        );
+    }
     Ok(())
 }
 
@@ -327,6 +391,16 @@ fn explain(arguments: &ExplainArgs) -> Result<()> {
         .with_context(|| format!("candidate {} was not found", arguments.id))?;
     println!("{}", candidate.canonical_text);
     println!("Occurrences: {}", candidate.occurrences);
+    let score = score_candidate(&candidate);
+    println!("Score: {:.0}%", score.total * 100.0);
+    println!(
+        "  confidence {:.0}% · usefulness {:.0}% · recurrence {:.0}% · severity {:.0}% · token efficiency {:.0}%",
+        score.confidence * 100.0,
+        score.usefulness * 100.0,
+        score.recurrence * 100.0,
+        score.severity * 100.0,
+        score.token_efficiency * 100.0,
+    );
     if let Some(decision) = database.decision(&candidate.canonical_text)? {
         println!("Decision: {:?}", decision.status);
         println!("Scope: {:?}", decision.scope);
