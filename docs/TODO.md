@@ -92,12 +92,12 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 
 ## P2 — préparation V1
 
-- [ ] Choisir et documenter les plateformes officiellement supportées.
-- [ ] Mettre en place les tests de compatibilité des formats de sessions.
+- [x] Choisir et documenter les plateformes officiellement supportées.
+- [x] Mettre en place les tests de compatibilité des formats de sessions.
 - [ ] Stabiliser les migrations SQLite et leur récupération après échec.
 - [ ] Ajouter une commande d'export, purge et diagnostic des données locales.
 - [ ] Préparer les paquets et binaires de distribution.
-- [ ] Documenter l'extension par nouvelle source, cible ou provider.
+- [x] Documenter l'extension par nouvelle source, cible ou provider.
 - [ ] Prioriser les agents supplémentaires à partir de demandes réelles.
 
 ## Décisions ouvertes
@@ -112,7 +112,7 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 
 ## Définition de « terminé » pour la V0.1
 
-- [ ] Installation locale documentée sur les plateformes retenues.
+- [x] Installation locale documentée sur les plateformes retenues.
 - [x] Parcours `init → analyze → review → diff → apply` testé de bout en bout.
 - [x] Chaque règle appliquée possède une preuve consultable via `explain`.
 - [x] Réanalyse incrémentale déterministe et décisions préservées.
