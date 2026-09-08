@@ -1,15 +1,20 @@
 use agentctx::{
     analysis::find_corrections,
+    artifacts::{self, PlannedArtifact},
     config::{Config, default_user_config_path},
     domain::NormalizedSession,
     ingest::{ClaudeSessionSource, CodexSessionSource, SessionSource},
     project::Project,
+    render::{ClaudeRenderer, CodexRenderer, Renderer},
     repository,
     storage::{Database, DecisionStatus, ReviewDecision, SourceFingerprint, candidate_id},
 };
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use std::path::{Path, PathBuf};
+use std::{
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "agentctx", version, about)]
@@ -32,6 +37,10 @@ enum Command {
     Review(ReviewArgs),
     /// Explain a candidate and show its evidence.
     Explain(ExplainArgs),
+    /// Preview changes to agent instruction files.
+    Diff(OutputArgs),
+    /// Apply reviewed rules to agent instruction files.
+    Apply(ApplyArgs),
 }
 
 #[derive(Debug, Args)]
@@ -103,6 +112,25 @@ struct ExplainArgs {
     database: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+struct OutputArgs {
+    #[arg(long, default_value = ".")]
+    project: PathBuf,
+    #[arg(long)]
+    database: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct ApplyArgs {
+    #[arg(long, default_value = ".")]
+    project: PathBuf,
+    #[arg(long)]
+    database: Option<PathBuf>,
+    /// Apply without an interactive confirmation.
+    #[arg(long)]
+    yes: bool,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -112,9 +140,57 @@ fn main() -> Result<()> {
         Some(Command::Analyze(arguments)) => analyze(&arguments)?,
         Some(Command::Review(arguments)) => review(&arguments)?,
         Some(Command::Explain(arguments)) => explain(&arguments)?,
+        Some(Command::Diff(arguments)) => diff(&arguments)?,
+        Some(Command::Apply(arguments)) => apply(&arguments)?,
         None => println!("Run `agentctx --help` to get started."),
     }
     Ok(())
+}
+
+fn diff(arguments: &OutputArgs) -> Result<()> {
+    let project = Project::detect(&arguments.project).context("could not detect project")?;
+    let plans = compile_plans(&project, arguments.database.as_deref())?;
+    for plan in plans {
+        println!("{}", artifacts::display_diff(&plan));
+    }
+    Ok(())
+}
+
+fn apply(arguments: &ApplyArgs) -> Result<()> {
+    let project = Project::detect(&arguments.project).context("could not detect project")?;
+    let plans = compile_plans(&project, arguments.database.as_deref())?;
+    for plan in &plans {
+        println!("{}", artifacts::display_diff(plan));
+    }
+    if !arguments.yes {
+        print!("Write these changes? [y/N] ");
+        io::stdout().flush()?;
+        let mut answer = String::new();
+        io::stdin().read_line(&mut answer)?;
+        if !matches!(
+            answer.trim().to_lowercase().as_str(),
+            "y" | "yes" | "o" | "oui"
+        ) {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+    artifacts::apply(&plans)?;
+    println!("Applied {} instruction files.", plans.len());
+    Ok(())
+}
+
+fn compile_plans(
+    project: &Project,
+    database_override: Option<&Path>,
+) -> Result<Vec<PlannedArtifact>> {
+    let database = Database::open(&database_path(project, database_override))?;
+    let rules = database.accepted_candidates()?;
+    let artifacts = [
+        ClaudeRenderer.render(project, &rules),
+        CodexRenderer.render(project, &rules),
+    ];
+    Ok(artifacts::plan(&artifacts)?)
 }
 
 fn analyze(arguments: &AnalyzeArgs) -> Result<()> {

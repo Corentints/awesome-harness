@@ -43,6 +43,14 @@ pub struct ReviewDecision {
     pub visibility: Visibility,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReviewedCandidate {
+    pub id: String,
+    pub canonical_text: String,
+    pub occurrences: usize,
+    pub decision: ReviewDecision,
+}
+
 impl SourceFingerprint {
     /// Hashes a source and records metadata used by incremental indexing.
     ///
@@ -446,6 +454,28 @@ impl Database {
                 })
             })
             .transpose()
+    }
+
+    /// Loads candidates accepted during review with their effective metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` or stored decision JSON is invalid.
+    pub fn accepted_candidates(&self) -> Result<Vec<ReviewedCandidate>, StorageError> {
+        let mut accepted = Vec::new();
+        for candidate in self.load_candidates()? {
+            if let Some(decision) = self.decision(&candidate.canonical_text)?
+                && decision.status == DecisionStatus::Accepted
+            {
+                accepted.push(ReviewedCandidate {
+                    id: candidate_id(&candidate.canonical_text),
+                    canonical_text: candidate.canonical_text,
+                    occurrences: candidate.occurrences,
+                    decision,
+                });
+            }
+        }
+        Ok(accepted)
     }
 }
 

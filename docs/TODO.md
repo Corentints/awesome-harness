@@ -39,12 +39,12 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Ajouter `agentctx review` avec accepter, rejeter, éditer et changer le scope.
 - [x] Mémoriser les rejets pour éviter les propositions identiques répétées.
 - [x] Ajouter `agentctx explain <rule-id>`.
-- [ ] Implémenter `ClaudeRenderer` pour le fichier racine.
-- [ ] Implémenter `CodexRenderer` pour le fichier racine.
-- [ ] Définir des marqueurs ou une stratégie sûre pour les sections gérées.
-- [ ] Ajouter des golden tests pour les deux renderers.
-- [ ] Ajouter `agentctx diff` sans écriture.
-- [ ] Ajouter `agentctx apply` avec contrôle de concurrence et écriture atomique.
+- [x] Implémenter `ClaudeRenderer` pour le fichier racine.
+- [x] Implémenter `CodexRenderer` pour le fichier racine.
+- [x] Définir des marqueurs ou une stratégie sûre pour les sections gérées.
+- [x] Ajouter des golden tests pour les deux renderers.
+- [x] Ajouter `agentctx diff` sans écriture.
+- [x] Ajouter `agentctx apply` avec contrôle de concurrence et écriture atomique.
 
 ## P0 — confidentialité et robustesse
 

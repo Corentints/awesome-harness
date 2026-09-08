@@ -1,7 +1,9 @@
 pub mod analysis;
+pub mod artifacts;
 pub mod config;
 pub mod domain;
 pub mod ingest;
 pub mod project;
+pub mod render;
 pub mod repository;
 pub mod storage;
