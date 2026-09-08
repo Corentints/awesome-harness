@@ -27,18 +27,7 @@ pub fn plan(
     artifacts
         .iter()
         .map(|artifact| {
-            let is_allowed_name = matches!(
-                artifact.path.file_name().and_then(|name| name.to_str()),
-                Some("AGENTS.md" | "CLAUDE.md")
-            );
-            if artifact.path.parent() != Some(project_root) || !is_allowed_name {
-                return Err(ArtifactError::UnsafeTarget {
-                    path: artifact.path.clone(),
-                });
-            }
-            if let Ok(metadata) = fs::symlink_metadata(&artifact.path)
-                && metadata.file_type().is_symlink()
-            {
+            if !is_safe_target(project_root, &artifact.path) {
                 return Err(ArtifactError::UnsafeTarget {
                     path: artifact.path.clone(),
                 });
@@ -64,6 +53,45 @@ pub fn plan(
             })
         })
         .collect()
+}
+
+fn is_safe_target(project_root: &Path, target: &Path) -> bool {
+    let Ok(relative) = target.strip_prefix(project_root) else {
+        return false;
+    };
+    let components = relative.components().collect::<Vec<_>>();
+    if components.is_empty()
+        || components
+            .iter()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return false;
+    }
+    let parts = components
+        .iter()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>();
+    let allowed = matches!(
+        parts.as_slice(),
+        ["AGENTS.md" | "CLAUDE.md" | "CLAUDE.local.md"]
+    ) || matches!(parts.as_slice(), [".claude", "rules", file] if Path::new(file)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md")))
+        || (parts.len() >= 2 && parts.last() == Some(&"AGENTS.md"));
+    if !allowed {
+        return false;
+    }
+
+    let mut cursor = project_root.to_path_buf();
+    for component in components {
+        cursor.push(component.as_os_str());
+        if let Ok(metadata) = fs::symlink_metadata(&cursor)
+            && metadata.file_type().is_symlink()
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// Writes planned files atomically after checking that their originals did not change.
@@ -208,6 +236,28 @@ mod tests {
             plan(Path::new("/repo"), &[artifact]),
             Err(ArtifactError::UnsafeTarget { .. })
         ));
+    }
+
+    #[test]
+    fn permits_native_nested_instruction_targets() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let artifacts = [
+            Artifact {
+                path: directory.path().join("packages/api/AGENTS.md"),
+                managed_section: "rules".to_owned(),
+            },
+            Artifact {
+                path: directory.path().join(".claude/rules/agentctx-a.md"),
+                managed_section: "rules".to_owned(),
+            },
+        ];
+
+        assert_eq!(
+            plan(directory.path(), &artifacts)
+                .expect("safe targets")
+                .len(),
+            2
+        );
     }
 
     #[test]

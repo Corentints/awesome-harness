@@ -73,11 +73,11 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 
 ## P1 — V0.3 scopes natifs
 
-- [ ] Rendre les règles Claude ciblées dans `.claude/rules/`.
-- [ ] Rendre les règles Codex dans des `AGENTS.md` imbriqués.
-- [ ] Gérer les scopes `Directory` et `FilePattern` de bout en bout.
-- [ ] Gérer `Shared` et `Personal`, dont `CLAUDE.local.md`.
-- [ ] Détecter et éviter les duplications entre niveaux.
+- [x] Rendre les règles Claude ciblées dans `.claude/rules/`.
+- [x] Rendre les règles Codex dans des `AGENTS.md` imbriqués.
+- [x] Gérer les scopes `Directory` et `FilePattern` de bout en bout.
+- [x] Gérer `Shared` et `Personal`, dont `CLAUDE.local.md`.
+- [x] Détecter et éviter les duplications entre niveaux.
 - [ ] Construire la TUI `review` après validation du parcours à prompts.
 
 ## P2 — V0.4 évaluation

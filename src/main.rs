@@ -97,6 +97,8 @@ enum ScopeArg {
     Global,
     Project,
     Session,
+    Directory,
+    FilePattern,
 }
 
 #[derive(Debug, Args)]
@@ -113,6 +115,9 @@ struct ReviewArgs {
     text: Option<String>,
     #[arg(long, value_enum)]
     scope: Option<ScopeArg>,
+    /// Directory or glob used with `--scope directory|file-pattern`.
+    #[arg(long)]
+    scope_path: Option<String>,
     #[arg(long)]
     personal: bool,
     /// Optional RFC 3339 expiry for temporary rules.
@@ -223,10 +228,11 @@ fn compile_plans(
 ) -> Result<Vec<PlannedArtifact>> {
     let database = Database::open(&database_path(project, database_override))?;
     let rules = database.accepted_candidates()?;
-    let artifacts = [
-        ClaudeRenderer.render(project, &rules),
-        CodexRenderer.render(project, &rules),
-    ];
+    let artifacts = ClaudeRenderer
+        .render(project, &rules)
+        .into_iter()
+        .chain(CodexRenderer.render(project, &rules))
+        .collect::<Vec<_>>();
     Ok(artifacts::plan(&project.root, &artifacts)?)
 }
 
@@ -387,6 +393,12 @@ fn review(arguments: &ReviewArgs) -> Result<()> {
             Some(ScopeArg::Global) => agentctx::domain::RuleScope::Global,
             Some(ScopeArg::Project) => agentctx::domain::RuleScope::Project(project.root.clone()),
             Some(ScopeArg::Session) => agentctx::domain::RuleScope::SessionOnly,
+            Some(ScopeArg::Directory) => agentctx::domain::RuleScope::Directory(
+                safe_relative_scope(arguments.scope_path.as_deref(), "directory")?.into(),
+            ),
+            Some(ScopeArg::FilePattern) => agentctx::domain::RuleScope::FilePattern(
+                safe_relative_scope(arguments.scope_path.as_deref(), "file-pattern")?.to_owned(),
+            ),
             None => inferred.scope,
         };
         let decision = ReviewDecision {
@@ -428,6 +440,19 @@ fn review(arguments: &ReviewArgs) -> Result<()> {
         println!("  suggested {:?}: {}", inferred.scope, inferred.reason);
     }
     Ok(())
+}
+
+fn safe_relative_scope<'a>(value: Option<&'a str>, scope: &str) -> Result<&'a str> {
+    let value = value.with_context(|| format!("--scope {scope} requires --scope-path"))?;
+    let path = Path::new(value);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        anyhow::bail!("scope paths must be relative and cannot contain `..`");
+    }
+    Ok(value)
 }
 
 fn explain(arguments: &ExplainArgs) -> Result<()> {
