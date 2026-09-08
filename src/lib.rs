@@ -3,6 +3,8 @@ pub mod artifacts;
 pub mod config;
 pub mod domain;
 pub mod ingest;
+pub mod llm;
+pub mod privacy;
 pub mod project;
 pub mod render;
 pub mod repository;

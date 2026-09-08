@@ -28,11 +28,11 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Concevoir le schéma SQLite et les migrations initiales.
 - [x] Stocker les références, hashes et versions de parseur pour l'indexation incrémentale.
 - [x] Persister candidats, preuves et décisions de revue.
-- [ ] Définir `InferenceProvider` sans dépendance fournisseur dans le domaine.
-- [ ] Définir le JSON Schema de sortie et ses validations.
-- [ ] Implémenter un faux provider déterministe pour les tests.
-- [ ] Implémenter le premier provider CLI choisi.
-- [ ] Batcher uniquement les segments retenus par les filtres.
+- [x] Définir `InferenceProvider` sans dépendance fournisseur dans le domaine.
+- [x] Définir le JSON Schema de sortie et ses validations.
+- [x] Implémenter un faux provider déterministe pour les tests.
+- [x] Implémenter le premier provider CLI choisi.
+- [x] Batcher uniquement les segments retenus par les filtres.
 - [ ] Canonicaliser et dédupliquer les règles proposées.
 - [ ] Implémenter un premier score explicable et borné.
 - [x] Ajouter `agentctx analyze` avec résumé des données traitées.
@@ -49,12 +49,12 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 ## P0 — confidentialité et robustesse
 
 - [ ] Définir le modèle de menace et les données susceptibles de quitter la machine.
-- [ ] Implémenter la redaction des formats de secrets connus.
+- [x] Implémenter la redaction des formats de secrets connus.
 - [ ] Ajouter la détection prudente des chaînes à forte entropie.
 - [ ] Garantir l'opt-in pour toute inférence distante.
 - [ ] Afficher le provider et le volume de contenu avant envoi.
-- [ ] Tester qu'aucun secret synthétique n'atteint le faux provider distant.
-- [ ] Échapper les contenus de sessions afin qu'ils restent des données non fiables.
+- [x] Tester qu'aucun secret synthétique n'atteint le faux provider distant.
+- [x] Échapper les contenus de sessions afin qu'ils restent des données non fiables.
 - [ ] Refuser les artefacts dont le chemin sort des cibles autorisées.
 - [ ] Tester les symlinks et changements de fichiers entre `diff` et `apply`.
 - [ ] Vérifier que les logs ne contiennent ni secrets ni extraits complets.
@@ -102,7 +102,7 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 
 ## Décisions ouvertes
 
-- [ ] Choisir le premier provider d'inférence CLI : Claude ou Codex.
+- [x] Choisir le premier provider d'inférence CLI : Codex.
 - [ ] Choisir le mécanisme de propriété des sections Markdown rendues.
 - [ ] Décider si les extraits de preuves sont stockés ou recalculés à la demande.
 - [ ] Définir la durée de conservation et le comportement de purge.
