@@ -4,13 +4,13 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 
 ## P0 — fondations du prototype
 
-- [ ] Initialiser le crate Rust, le formatage, le lint et les tests.
-- [ ] Définir les identifiants typés et `NormalizedSession`, `Message`, `Event`.
-- [ ] Définir `Rule`, `Evidence`, `RuleScope`, `Visibility` et `RuleStatus`.
-- [ ] Créer des fixtures JSONL Claude et Codex minimales, anonymisées.
-- [ ] Implémenter `SessionSource` et l'adaptateur Claude sur fixtures.
-- [ ] Implémenter `SessionSource` et l'adaptateur Codex sur fixtures.
-- [ ] Lire les JSONL en streaming et tolérer les événements inconnus.
+- [x] Initialiser le crate Rust, le formatage, le lint et les tests.
+- [x] Définir les identifiants typés et `NormalizedSession`, `Message`, `Event`.
+- [x] Définir `Rule`, `Evidence`, `RuleScope`, `Visibility` et `RuleStatus`.
+- [x] Créer des fixtures JSONL Claude et Codex minimales, anonymisées.
+- [x] Implémenter `SessionSource` et l'adaptateur Claude sur fixtures.
+- [x] Implémenter `SessionSource` et l'adaptateur Codex sur fixtures.
+- [x] Lire les JSONL en streaming et tolérer les événements inconnus.
 - [ ] Détecter le dépôt courant et associer les sessions au projet.
 - [ ] Extraire des segments avec les marqueurs de correction français et anglais.
 - [ ] Regrouper les corrections répétées sans LLM pour le premier rapport.

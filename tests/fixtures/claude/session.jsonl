@@ -1,0 +1,5 @@
+{"type":"summary","summary":"An anonymized session","timestamp":"2026-01-10T10:00:00Z"}
+{"type":"user","uuid":"claude-user-1","timestamp":"2026-01-10T10:00:01Z","cwd":"/projects/example","message":{"role":"user","content":"Please add the dependency."}}
+{"type":"assistant","uuid":"claude-assistant-1","timestamp":"2026-01-10T10:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"I will use npm."}]}}
+{"type":"user","uuid":"claude-user-2","timestamp":"2026-01-10T10:00:03Z","message":{"role":"user","content":"No, always use pnpm on this project."}}
+{"type":"future_event","payload":{"ignored":true}}
