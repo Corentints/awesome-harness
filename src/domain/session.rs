@@ -38,6 +38,7 @@ pub struct Event {
 pub struct NormalizedSession {
     pub id: SessionId,
     pub source: AgentSource,
+    pub origin: Option<PathBuf>,
     pub project: Option<PathBuf>,
     pub started_at: Option<DateTime<Utc>>,
     pub messages: Vec<Message>,
@@ -50,6 +51,7 @@ impl NormalizedSession {
         Self {
             id: SessionId::new(id),
             source,
+            origin: None,
             project: None,
             started_at: None,
             messages: Vec::new(),

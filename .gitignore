@@ -1,5 +1,5 @@
 /target/
+/.agentctx/
 *.db
 *.db-shm
 *.db-wal
-

@@ -13,7 +13,7 @@ use std::{
 };
 use thiserror::Error;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 pub struct Database {
     connection: Connection,
@@ -92,6 +92,12 @@ impl Database {
     ///
     /// Returns an error when `SQLite` cannot open or migrate the database.
     pub fn open(path: &Path) -> Result<Self, StorageError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| StorageError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
         let connection = Connection::open(path)?;
         let database = Self { connection };
         database.migrate()?;
@@ -149,10 +155,27 @@ impl Database {
                  decided_at TEXT NOT NULL
              );",
         )?;
-        self.connection.execute(
-            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
-            params![SCHEMA_VERSION, Utc::now().to_rfc3339()],
+        let version = self.connection.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get::<_, u32>(0),
         )?;
+        if version < 1 {
+            self.connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?1)",
+                [Utc::now().to_rfc3339()],
+            )?;
+        }
+        if version < SCHEMA_VERSION {
+            self.connection.execute(
+                "ALTER TABLE evidence ADD COLUMN source_path TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+            self.connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                params![SCHEMA_VERSION, Utc::now().to_rfc3339()],
+            )?;
+        }
         Ok(())
     }
 
@@ -243,18 +266,88 @@ impl Database {
             transaction.execute("DELETE FROM evidence WHERE candidate_id = ?1", [&id])?;
             for evidence in &candidate.evidence {
                 transaction.execute(
-                    "INSERT OR IGNORE INTO evidence(candidate_id, session_id, message_id, user_text, preceding_agent_text)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT OR IGNORE INTO evidence(candidate_id, session_id, message_id, user_text, preceding_agent_text, source_path)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![
                         id,
                         evidence.session_id.as_str(),
                         evidence.message_id.as_ref().map(MessageId::as_str),
                         evidence.user_text,
                         evidence.preceding_agent_text,
+                        evidence.source_path.as_ref().map(|path| path.to_string_lossy()),
                     ],
                 )?;
             }
         }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Replaces the extracted evidence associated with one changed source and
+    /// records its fingerprint in the same transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the fingerprint cannot fit in `SQLite` or the
+    /// transaction cannot be committed.
+    pub fn replace_source_candidates(
+        &mut self,
+        source: &SourceFingerprint,
+        candidates: &[CorrectionCandidate],
+    ) -> Result<(), StorageError> {
+        let source_path = source.path.to_string_lossy();
+        let size = i64::try_from(source.size).map_err(|_| StorageError::IntegerOverflow)?;
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM evidence WHERE source_path = ?1",
+            [&source_path],
+        )?;
+
+        for candidate in candidates {
+            let id = candidate_id(&candidate.canonical_text);
+            transaction.execute(
+                "INSERT INTO candidates(id, canonical_text, occurrences, updated_at)
+                 VALUES (?1, ?2, 0, ?3)
+                 ON CONFLICT(id) DO UPDATE SET canonical_text=excluded.canonical_text,
+                 updated_at=excluded.updated_at",
+                params![id, candidate.canonical_text, Utc::now().to_rfc3339()],
+            )?;
+            for evidence in &candidate.evidence {
+                transaction.execute(
+                    "INSERT OR IGNORE INTO evidence(candidate_id, session_id, message_id, user_text, preceding_agent_text, source_path)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        id,
+                        evidence.session_id.as_str(),
+                        evidence.message_id.as_ref().map(MessageId::as_str),
+                        evidence.user_text,
+                        evidence.preceding_agent_text,
+                        source_path,
+                    ],
+                )?;
+            }
+        }
+        transaction.execute(
+            "UPDATE candidates SET occurrences = (
+                SELECT COUNT(*) FROM evidence WHERE evidence.candidate_id = candidates.id
+             )",
+            [],
+        )?;
+        transaction.execute(
+            "INSERT INTO sources(path, size, modified_ns, content_hash, parser_version, processed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(path) DO UPDATE SET size=excluded.size, modified_ns=excluded.modified_ns,
+             content_hash=excluded.content_hash, parser_version=excluded.parser_version,
+             processed_at=excluded.processed_at",
+            params![
+                source_path,
+                size,
+                source.modified_ns.to_string(),
+                source.content_hash,
+                source.parser_version,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
         transaction.commit()?;
         Ok(())
     }
@@ -266,7 +359,8 @@ impl Database {
     /// Returns an error when `SQLite` cannot decode a stored row.
     pub fn load_candidates(&self) -> Result<Vec<CorrectionCandidate>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, canonical_text, occurrences FROM candidates ORDER BY occurrences DESC, canonical_text",
+            "SELECT id, canonical_text, occurrences FROM candidates
+             WHERE occurrences > 0 ORDER BY occurrences DESC, canonical_text",
         )?;
         let rows = statement.query_map([], |row| {
             Ok((
@@ -281,12 +375,14 @@ impl Database {
             let occurrences =
                 usize::try_from(occurrences).map_err(|_| StorageError::IntegerOverflow)?;
             let mut evidence_statement = self.connection.prepare(
-                "SELECT session_id, message_id, user_text, preceding_agent_text
+                "SELECT session_id, message_id, user_text, preceding_agent_text, source_path
                  FROM evidence WHERE candidate_id = ?1 ORDER BY session_id, message_id",
             )?;
             let evidence = evidence_statement
                 .query_map([id], |row| {
+                    let source_path = row.get::<_, String>(4)?;
                     Ok(CorrectionEvidence {
+                        source_path: (!source_path.is_empty()).then(|| PathBuf::from(source_path)),
                         session_id: SessionId::new(row.get::<_, String>(0)?),
                         message_id: row.get::<_, Option<String>>(1)?.map(MessageId::new),
                         user_text: row.get(2)?,

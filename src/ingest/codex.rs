@@ -21,6 +21,7 @@ impl SessionSource for CodexSessionSource {
 
     fn parse(&self, session: &SessionRef) -> Result<NormalizedSession, IngestError> {
         let mut normalized = NormalizedSession::new(&session.id, AgentSource::Codex);
+        normalized.origin = Some(session.path.clone());
         jsonl::for_each_value(&session.path, |value| parse_value(&mut normalized, &value))?;
         Ok(normalized)
     }
