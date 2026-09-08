@@ -50,4 +50,5 @@ fn reports_the_line_of_invalid_json() {
         .parse(&reference)
         .expect_err("invalid line must fail");
     assert!(error.to_string().contains(":2:"));
+    assert!(!error.to_string().contains("not-json"));
 }

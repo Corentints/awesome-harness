@@ -287,11 +287,11 @@ fn analysis_roots(arguments: &AnalyzeArgs) -> Vec<(Box<dyn SessionSource>, u32)>
     let mut roots: Vec<(Box<dyn SessionSource>, u32)> = Vec::new();
     let claude = arguments.claude_root.clone().or_else(default_claude_root);
     if let Some(root) = claude.filter(|root| root.is_dir()) {
-        roots.push((Box::new(ClaudeSessionSource::new(root)), 1));
+        roots.push((Box::new(ClaudeSessionSource::new(root)), 2));
     }
     let codex = arguments.codex_root.clone().or_else(default_codex_root);
     if let Some(root) = codex.filter(|root| root.is_dir()) {
-        roots.push((Box::new(CodexSessionSource::new(root)), 1));
+        roots.push((Box::new(CodexSessionSource::new(root)), 2));
     }
     roots
 }

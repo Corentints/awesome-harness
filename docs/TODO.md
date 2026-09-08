@@ -15,8 +15,8 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Extraire des segments avec les marqueurs de correction français et anglais.
 - [x] Regrouper les corrections répétées sans LLM pour le premier rapport.
 - [x] Ajouter `agentctx mistakes` avec occurrences et références de preuves.
-- [ ] Tester le prototype sur un historique réel sans publier ses données.
-- [ ] Consigner les vrais positifs, faux positifs et signaux manquants.
+- [x] Tester le prototype sur un historique réel sans publier ses données.
+- [x] Consigner les vrais positifs, faux positifs et signaux manquants.
 
 ## P0 — boucle V0.1
 
@@ -57,7 +57,7 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Échapper les contenus de sessions afin qu'ils restent des données non fiables.
 - [x] Refuser les artefacts dont le chemin sort des cibles autorisées.
 - [x] Tester les symlinks et changements de fichiers entre `diff` et `apply`.
-- [ ] Vérifier que les logs ne contiennent ni secrets ni extraits complets.
+- [x] Vérifier que les logs ne contiennent ni secrets ni extraits complets.
 
 ## P1 — V0.2 maintenance
 

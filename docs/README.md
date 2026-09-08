@@ -13,6 +13,7 @@ AgentContext est un compilateur de contexte local-first pour agents de code. Il 
 - [Interface en ligne de commande](cli.md) : commandes et parcours utilisateur.
 - [Sécurité et confidentialité](privacy.md) : traitement local, secrets et consentement.
 - [Évaluation](evaluation.md) : critères de qualité et benchmark historique.
+- [Journal de validation](validation.md) : essais réels et enseignements, sans données de session.
 - [Roadmap](ROADMAP.md) : jalons et critères de sortie.
 - [Todolist](TODO.md) : backlog d'implémentation ordonné.
 
