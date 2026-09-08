@@ -30,6 +30,7 @@ const CORRECTION_PREFIXES: &[&str] = &["no,", "non,", "no:", "non:", "je t'ai d√
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CorrectionEvidence {
     pub source_path: Option<PathBuf>,
+    pub project_path: Option<PathBuf>,
     pub session_id: SessionId,
     pub message_id: Option<MessageId>,
     pub user_text: String,
@@ -66,6 +67,7 @@ pub fn find_corrections(sessions: &[NormalizedSession]) -> Vec<CorrectionCandida
                 .map(|candidate| candidate.content.clone());
             let evidence = CorrectionEvidence {
                 source_path: session.origin.clone(),
+                project_path: session.project.clone(),
                 session_id: session.id.clone(),
                 message_id: message.id.clone(),
                 user_text: message.content.clone(),

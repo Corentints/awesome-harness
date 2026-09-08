@@ -125,6 +125,9 @@ mod tests {
                 edited_text: None,
                 scope,
                 visibility,
+                last_confirmed_at: None,
+                last_used_at: None,
+                valid_until: None,
             },
         }
     }

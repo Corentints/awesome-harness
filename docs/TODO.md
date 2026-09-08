@@ -61,15 +61,15 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 
 ## P1 — V0.2 maintenance
 
-- [ ] Formaliser les règles d'inférence de scope et leurs explications.
-- [ ] Calculer la diversité de projets pour les candidats globaux.
-- [ ] Implémenter `agentctx analyze --global`.
+- [x] Formaliser les règles d'inférence de scope et leurs explications.
+- [x] Calculer la diversité de projets pour les candidats globaux.
+- [x] Implémenter `agentctx analyze --global`.
 - [ ] Détecter les contradictions exactes puis sémantiques.
-- [ ] Suivre `last_confirmed_at`, `last_used_at` et `valid_until`.
-- [ ] Détecter une règle contredite par l'état courant du dépôt.
-- [ ] Vérifier l'existence et la validité des commandes persistées.
-- [ ] Implémenter `agentctx doctor`.
-- [ ] Ajouter des recommandations de remplacement sans application automatique.
+- [x] Suivre `last_confirmed_at`, `last_used_at` et `valid_until`.
+- [x] Détecter une règle contredite par l'état courant du dépôt.
+- [x] Vérifier l'existence et la validité des commandes persistées.
+- [x] Implémenter `agentctx doctor`.
+- [x] Ajouter des recommandations de remplacement sans application automatique.
 
 ## P1 — V0.3 scopes natifs
 

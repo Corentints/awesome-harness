@@ -6,6 +6,7 @@ use std::{
 };
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn runs_the_local_workflow_without_losing_existing_instructions() {
     let directory = tempfile::tempdir().expect("temp directory");
     let root = directory.path();
@@ -101,6 +102,9 @@ fn runs_the_local_workflow_without_losing_existing_instructions() {
     assert!(agents.contains("Always use pnpm."));
     assert!(root.join("CLAUDE.md").exists());
 
+    let health = run(root, &["doctor", "--database", path(&database)]);
+    assert!(String::from_utf8_lossy(&health.stdout).contains("Context health: 100/100"));
+
     let incremental = run(
         root,
         &[
@@ -112,6 +116,19 @@ fn runs_the_local_workflow_without_losing_existing_instructions() {
         ],
     );
     assert!(String::from_utf8_lossy(&incremental.stdout).contains("Unchanged sessions: 2"));
+
+    let global = run(
+        root,
+        &[
+            "analyze",
+            "--global",
+            "--claude-root",
+            path(&sessions),
+            "--database",
+            path(&database),
+        ],
+    );
+    assert!(String::from_utf8_lossy(&global.stdout).contains("Processed sessions: 2"));
 }
 
 fn write_session(path: &Path, project: &Path, id: &str) {

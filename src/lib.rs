@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod artifacts;
 pub mod config;
+pub mod doctor;
 pub mod domain;
 pub mod ingest;
 pub mod llm;

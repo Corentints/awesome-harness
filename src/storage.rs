@@ -2,7 +2,7 @@ use crate::{
     analysis::{CorrectionCandidate, CorrectionEvidence},
     domain::{MessageId, RuleScope, SessionId, Visibility},
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -13,7 +13,7 @@ use std::{
 };
 use thiserror::Error;
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 4;
 
 pub struct Database {
     connection: Connection,
@@ -41,6 +41,9 @@ pub struct ReviewDecision {
     pub edited_text: Option<String>,
     pub scope: RuleScope,
     pub visibility: Visibility,
+    pub last_confirmed_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub valid_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -174,10 +177,31 @@ impl Database {
                 [Utc::now().to_rfc3339()],
             )?;
         }
-        if version < SCHEMA_VERSION {
+        if version < 2 {
             self.connection.execute(
                 "ALTER TABLE evidence ADD COLUMN source_path TEXT NOT NULL DEFAULT ''",
                 [],
+            )?;
+            self.connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                params![2, Utc::now().to_rfc3339()],
+            )?;
+        }
+        if version < 3 {
+            self.connection.execute(
+                "ALTER TABLE evidence ADD COLUMN project_path TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+            self.connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                params![3, Utc::now().to_rfc3339()],
+            )?;
+        }
+        if version < SCHEMA_VERSION {
+            self.connection.execute_batch(
+                "ALTER TABLE review_decisions ADD COLUMN last_confirmed_at TEXT;
+                 ALTER TABLE review_decisions ADD COLUMN last_used_at TEXT;
+                 ALTER TABLE review_decisions ADD COLUMN valid_until TEXT;",
             )?;
             self.connection.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
@@ -274,8 +298,8 @@ impl Database {
             transaction.execute("DELETE FROM evidence WHERE candidate_id = ?1", [&id])?;
             for evidence in &candidate.evidence {
                 transaction.execute(
-                    "INSERT OR IGNORE INTO evidence(candidate_id, session_id, message_id, user_text, preceding_agent_text, source_path)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT OR IGNORE INTO evidence(candidate_id, session_id, message_id, user_text, preceding_agent_text, source_path, project_path)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         id,
                         evidence.session_id.as_str(),
@@ -283,6 +307,7 @@ impl Database {
                         evidence.user_text,
                         evidence.preceding_agent_text,
                         evidence.source_path.as_ref().map(|path| path.to_string_lossy()),
+                        evidence.project_path.as_ref().map(|path| path.to_string_lossy()),
                     ],
                 )?;
             }
@@ -322,8 +347,8 @@ impl Database {
             )?;
             for evidence in &candidate.evidence {
                 transaction.execute(
-                    "INSERT OR IGNORE INTO evidence(candidate_id, session_id, message_id, user_text, preceding_agent_text, source_path)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT OR IGNORE INTO evidence(candidate_id, session_id, message_id, user_text, preceding_agent_text, source_path, project_path)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         id,
                         evidence.session_id.as_str(),
@@ -331,6 +356,7 @@ impl Database {
                         evidence.user_text,
                         evidence.preceding_agent_text,
                         source_path,
+                        evidence.project_path.as_ref().map(|path| path.to_string_lossy()),
                     ],
                 )?;
             }
@@ -383,14 +409,17 @@ impl Database {
             let occurrences =
                 usize::try_from(occurrences).map_err(|_| StorageError::IntegerOverflow)?;
             let mut evidence_statement = self.connection.prepare(
-                "SELECT session_id, message_id, user_text, preceding_agent_text, source_path
+                "SELECT session_id, message_id, user_text, preceding_agent_text, source_path, project_path
                  FROM evidence WHERE candidate_id = ?1 ORDER BY session_id, message_id",
             )?;
             let evidence = evidence_statement
                 .query_map([id], |row| {
                     let source_path = row.get::<_, String>(4)?;
+                    let project_path = row.get::<_, String>(5)?;
                     Ok(CorrectionEvidence {
                         source_path: (!source_path.is_empty()).then(|| PathBuf::from(source_path)),
+                        project_path: (!project_path.is_empty())
+                            .then(|| PathBuf::from(project_path)),
                         session_id: SessionId::new(row.get::<_, String>(0)?),
                         message_id: row.get::<_, Option<String>>(1)?.map(MessageId::new),
                         user_text: row.get(2)?,
@@ -422,12 +451,25 @@ impl Database {
         let scope_json = serde_json::to_string(&decision.scope)?;
         let visibility = serde_json::to_string(&decision.visibility)?;
         let status = serde_json::to_string(&decision.status)?;
+        let confirmed_at = decision.last_confirmed_at.unwrap_or_else(Utc::now);
         self.connection.execute(
-            "INSERT INTO review_decisions(candidate_id, status, edited_text, scope_json, visibility, decided_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO review_decisions(candidate_id, status, edited_text, scope_json, visibility, decided_at, last_confirmed_at, last_used_at, valid_until)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(candidate_id) DO UPDATE SET status=excluded.status, edited_text=excluded.edited_text,
-             scope_json=excluded.scope_json, visibility=excluded.visibility, decided_at=excluded.decided_at",
-            params![id, status, decision.edited_text, scope_json, visibility, Utc::now().to_rfc3339()],
+             scope_json=excluded.scope_json, visibility=excluded.visibility, decided_at=excluded.decided_at,
+             last_confirmed_at=excluded.last_confirmed_at, last_used_at=excluded.last_used_at,
+             valid_until=excluded.valid_until",
+            params![
+                id,
+                status,
+                decision.edited_text,
+                scope_json,
+                visibility,
+                Utc::now().to_rfc3339(),
+                confirmed_at.to_rfc3339(),
+                decision.last_used_at.map(|date| date.to_rfc3339()),
+                decision.valid_until.map(|date| date.to_rfc3339()),
+            ],
         )?;
         Ok(())
     }
@@ -439,20 +481,47 @@ impl Database {
     /// Returns an error when `SQLite` or the stored JSON representation is invalid.
     pub fn decision(&self, candidate_text: &str) -> Result<Option<ReviewDecision>, StorageError> {
         let id = candidate_id(candidate_text);
-        let stored = self.connection.query_row(
-            "SELECT status, edited_text, scope_json, visibility FROM review_decisions WHERE candidate_id = ?1",
-            [id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
-        ).optional()?;
+        let stored = self
+            .connection
+            .query_row(
+                "SELECT status, edited_text, scope_json, visibility, last_confirmed_at, last_used_at, valid_until
+                 FROM review_decisions WHERE candidate_id = ?1",
+                [id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                    ))
+                },
+            )
+            .optional()?;
         stored
-            .map(|(status, edited_text, scope, visibility)| {
-                Ok(ReviewDecision {
-                    status: serde_json::from_str(&status)?,
+            .map(
+                |(
+                    status,
                     edited_text,
-                    scope: serde_json::from_str(&scope)?,
-                    visibility: serde_json::from_str(&visibility)?,
-                })
-            })
+                    scope,
+                    visibility,
+                    last_confirmed_at,
+                    last_used_at,
+                    valid_until,
+                )| {
+                    Ok(ReviewDecision {
+                        status: serde_json::from_str(&status)?,
+                        edited_text,
+                        scope: serde_json::from_str(&scope)?,
+                        visibility: serde_json::from_str(&visibility)?,
+                        last_confirmed_at: parse_optional_date(last_confirmed_at)?,
+                        last_used_at: parse_optional_date(last_used_at)?,
+                        valid_until: parse_optional_date(valid_until)?,
+                    })
+                },
+            )
             .transpose()
     }
 
@@ -487,6 +556,16 @@ pub fn candidate_id(text: &str) -> String {
     )
 }
 
+fn parse_optional_date(value: Option<String>) -> Result<Option<DateTime<Utc>>, StorageError> {
+    value
+        .map(|value| {
+            DateTime::parse_from_rfc3339(&value)
+                .map(|date| date.with_timezone(&Utc))
+                .map_err(StorageError::InvalidDate)
+        })
+        .transpose()
+}
+
 #[derive(Debug, Error)]
 pub enum StorageError {
     #[error("SQLite error: {0}")]
@@ -501,4 +580,6 @@ pub enum StorageError {
     Json(#[from] serde_json::Error),
     #[error("integer value cannot be represented by SQLite or this platform")]
     IntegerOverflow,
+    #[error("invalid stored date: {0}")]
+    InvalidDate(chrono::ParseError),
 }

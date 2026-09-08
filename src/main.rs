@@ -1,7 +1,8 @@
 use agentctx::{
-    analysis::{find_corrections, score_candidate},
+    analysis::{find_corrections, infer_scope, score_candidate},
     artifacts::{self, PlannedArtifact},
     config::{Config, default_user_config_path},
+    doctor,
     domain::NormalizedSession,
     ingest::{ClaudeSessionSource, CodexSessionSource, SessionSource},
     llm::{CodexCliProvider, InferenceProvider, InferenceSegment, batches, infer_redacted},
@@ -43,6 +44,8 @@ enum Command {
     Diff(OutputArgs),
     /// Apply reviewed rules to agent instruction files.
     Apply(ApplyArgs),
+    /// Diagnose conflicts, stale rules and repository drift.
+    Doctor(OutputArgs),
 }
 
 #[derive(Debug, Args)]
@@ -84,6 +87,9 @@ struct AnalyzeArgs {
     /// Maximum number of filtered segments sent in one inference request.
     #[arg(long, default_value_t = 50)]
     batch_size: usize,
+    /// Analyze sessions across all discovered projects.
+    #[arg(long)]
+    global: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -105,10 +111,13 @@ struct ReviewArgs {
     reject: Option<String>,
     #[arg(long, requires = "accept")]
     text: Option<String>,
-    #[arg(long, value_enum, default_value = "project")]
-    scope: ScopeArg,
+    #[arg(long, value_enum)]
+    scope: Option<ScopeArg>,
     #[arg(long)]
     personal: bool,
+    /// Optional RFC 3339 expiry for temporary rules.
+    #[arg(long, requires = "accept")]
+    valid_until: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -150,7 +159,27 @@ fn main() -> Result<()> {
         Some(Command::Explain(arguments)) => explain(&arguments)?,
         Some(Command::Diff(arguments)) => diff(&arguments)?,
         Some(Command::Apply(arguments)) => apply(&arguments)?,
+        Some(Command::Doctor(arguments)) => doctor(&arguments)?,
         None => println!("Run `agentctx --help` to get started."),
+    }
+    Ok(())
+}
+
+fn doctor(arguments: &OutputArgs) -> Result<()> {
+    let project = Project::detect(&arguments.project).context("could not detect project")?;
+    let database = Database::open(&database_path(&project, arguments.database.as_deref()))?;
+    let facts = repository::scan(&project)?;
+    let report = doctor::diagnose(&database.accepted_candidates()?, &facts, chrono::Utc::now());
+    println!("Context health: {}/100", report.health);
+    if report.issues.is_empty() {
+        println!("No deterministic context issues found.");
+    }
+    for issue in report.issues {
+        println!("- {:?}: {}", issue.kind, issue.message);
+        if let Some(recommendation) = issue.recommendation {
+            println!("  Recommendation: {recommendation}");
+        }
+        println!("  Rules: {}", issue.rule_ids.join(", "));
     }
     Ok(())
 }
@@ -223,8 +252,13 @@ fn analyze(arguments: &AnalyzeArgs) -> Result<()> {
     let mut processed = 0;
     let mut skipped = 0;
     for (source, parser_version) in roots {
-        let (new, current) =
-            process_changed_sessions(source.as_ref(), parser_version, &project, &mut database)?;
+        let (new, current) = process_changed_sessions(
+            source.as_ref(),
+            parser_version + u32::from(arguments.global) * 100,
+            &project,
+            !arguments.global,
+            &mut database,
+        )?;
         processed += new;
         skipped += current;
     }
@@ -300,6 +334,7 @@ fn process_changed_sessions(
     source: &dyn SessionSource,
     parser_version: u32,
     project: &Project,
+    restrict_to_project: bool,
     database: &mut Database,
 ) -> Result<(usize, usize)> {
     let mut processed = 0;
@@ -311,10 +346,11 @@ fn process_changed_sessions(
             continue;
         }
         let session = source.parse(&reference)?;
-        let candidates = if session
-            .project
-            .as_deref()
-            .is_none_or(|path| paths_match_project(path, project))
+        let candidates = if !restrict_to_project
+            || session
+                .project
+                .as_deref()
+                .is_none_or(|path| paths_match_project(path, project))
         {
             find_corrections(std::slice::from_ref(&session))
         } else {
@@ -346,10 +382,12 @@ fn review(arguments: &ReviewArgs) -> Result<()> {
             .iter()
             .find(|candidate| candidate_id(&candidate.canonical_text) == *id)
             .with_context(|| format!("candidate {id} was not found"))?;
-        let scope = match arguments.scope {
-            ScopeArg::Global => agentctx::domain::RuleScope::Global,
-            ScopeArg::Project => agentctx::domain::RuleScope::Project(project.root.clone()),
-            ScopeArg::Session => agentctx::domain::RuleScope::SessionOnly,
+        let inferred = infer_scope(candidate, &project.root);
+        let scope = match arguments.scope.as_ref() {
+            Some(ScopeArg::Global) => agentctx::domain::RuleScope::Global,
+            Some(ScopeArg::Project) => agentctx::domain::RuleScope::Project(project.root.clone()),
+            Some(ScopeArg::Session) => agentctx::domain::RuleScope::SessionOnly,
+            None => inferred.scope,
         };
         let decision = ReviewDecision {
             status,
@@ -358,8 +396,17 @@ fn review(arguments: &ReviewArgs) -> Result<()> {
             visibility: if arguments.personal {
                 agentctx::domain::Visibility::Personal
             } else {
-                agentctx::domain::Visibility::Shared
+                inferred.visibility
             },
+            last_confirmed_at: None,
+            last_used_at: None,
+            valid_until: arguments
+                .valid_until
+                .as_deref()
+                .map(chrono::DateTime::parse_from_rfc3339)
+                .transpose()
+                .context("--valid-until must be an RFC 3339 timestamp")?
+                .map(|date| date.with_timezone(&chrono::Utc)),
         };
         database.record_decision(&candidate.canonical_text, &decision)?;
         println!("Recorded decision for {id}");
@@ -368,6 +415,7 @@ fn review(arguments: &ReviewArgs) -> Result<()> {
 
     for candidate in candidates {
         let id = candidate_id(&candidate.canonical_text);
+        let inferred = infer_scope(&candidate, &project.root);
         let status = database
             .decision(&candidate.canonical_text)?
             .map_or("pending".to_owned(), |decision| {
@@ -377,6 +425,7 @@ fn review(arguments: &ReviewArgs) -> Result<()> {
             "{id} [{status}] {}× {}",
             candidate.occurrences, candidate.canonical_text
         );
+        println!("  suggested {:?}: {}", inferred.scope, inferred.reason);
     }
     Ok(())
 }

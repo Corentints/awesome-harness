@@ -10,6 +10,7 @@ fn candidate() -> CorrectionCandidate {
         occurrences: 2,
         evidence: vec![CorrectionEvidence {
             source_path: Some("/sessions/session.jsonl".into()),
+            project_path: Some("/projects/example".into()),
             session_id: SessionId::new("session-1"),
             message_id: Some(MessageId::new("message-2")),
             user_text: "No, always use pnpm.".to_owned(),
@@ -49,6 +50,13 @@ fn preserves_review_decisions_when_candidates_are_reanalyzed() {
         edited_text: Some("Use pnpm.".to_owned()),
         scope: RuleScope::Project("/projects/example".into()),
         visibility: Visibility::Shared,
+        last_confirmed_at: Some(
+            "2026-01-01T00:00:00Z"
+                .parse()
+                .expect("valid confirmation date"),
+        ),
+        last_used_at: None,
+        valid_until: None,
     };
     database
         .record_decision(&candidate.canonical_text, &decision)
