@@ -1,0 +1,378 @@
+use crate::{
+    analysis::{CorrectionCandidate, CorrectionEvidence},
+    domain::{MessageId, RuleScope, SessionId, Visibility},
+};
+use chrono::Utc;
+use rusqlite::{Connection, OptionalExtension, params};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::File,
+    io::{self, Read},
+    path::{Path, PathBuf},
+    time::UNIX_EPOCH,
+};
+use thiserror::Error;
+
+const SCHEMA_VERSION: u32 = 1;
+
+pub struct Database {
+    connection: Connection,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceFingerprint {
+    pub path: PathBuf,
+    pub size: u64,
+    pub modified_ns: u128,
+    pub content_hash: String,
+    pub parser_version: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionStatus {
+    Accepted,
+    Rejected,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReviewDecision {
+    pub status: DecisionStatus,
+    pub edited_text: Option<String>,
+    pub scope: RuleScope,
+    pub visibility: Visibility,
+}
+
+impl SourceFingerprint {
+    /// Hashes a source and records metadata used by incremental indexing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when file metadata or contents cannot be read.
+    pub fn from_path(path: &Path, parser_version: u32) -> Result<Self, StorageError> {
+        let metadata = path.metadata().map_err(|source| StorageError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let modified_ns = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map_or(0, |duration| duration.as_nanos());
+        let mut file = File::open(path).map_err(|source| StorageError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buffer = [0_u8; 16 * 1024];
+        loop {
+            let read = file.read(&mut buffer).map_err(|source| StorageError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            size: metadata.len(),
+            modified_ns,
+            content_hash: hasher.finalize().to_hex().to_string(),
+            parser_version,
+        })
+    }
+}
+
+impl Database {
+    /// Opens or creates the local database and applies all schema migrations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot open or migrate the database.
+    pub fn open(path: &Path) -> Result<Self, StorageError> {
+        let connection = Connection::open(path)?;
+        let database = Self { connection };
+        database.migrate()?;
+        Ok(database)
+    }
+
+    /// Opens a temporary in-memory database, primarily for isolated workflows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot initialize the schema.
+    pub fn in_memory() -> Result<Self, StorageError> {
+        let connection = Connection::open_in_memory()?;
+        let database = Self { connection };
+        database.migrate()?;
+        Ok(database)
+    }
+
+    fn migrate(&self) -> Result<(), StorageError> {
+        self.connection.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             PRAGMA journal_mode = WAL;
+             CREATE TABLE IF NOT EXISTS schema_migrations (
+                 version INTEGER PRIMARY KEY,
+                 applied_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS sources (
+                 path TEXT PRIMARY KEY,
+                 size INTEGER NOT NULL,
+                 modified_ns TEXT NOT NULL,
+                 content_hash TEXT NOT NULL,
+                 parser_version INTEGER NOT NULL,
+                 processed_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS candidates (
+                 id TEXT PRIMARY KEY,
+                 canonical_text TEXT NOT NULL,
+                 occurrences INTEGER NOT NULL,
+                 updated_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS evidence (
+                 candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                 session_id TEXT NOT NULL,
+                 message_id TEXT,
+                 user_text TEXT NOT NULL,
+                 preceding_agent_text TEXT,
+                 UNIQUE(candidate_id, session_id, message_id, user_text)
+             );
+             CREATE TABLE IF NOT EXISTS review_decisions (
+                 candidate_id TEXT PRIMARY KEY REFERENCES candidates(id) ON DELETE CASCADE,
+                 status TEXT NOT NULL,
+                 edited_text TEXT,
+                 scope_json TEXT NOT NULL,
+                 visibility TEXT NOT NULL,
+                 decided_at TEXT NOT NULL
+             );",
+        )?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+            params![SCHEMA_VERSION, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Checks whether a source has already been processed with identical content
+    /// and parser version.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot query the source record.
+    pub fn is_source_current(&self, source: &SourceFingerprint) -> Result<bool, StorageError> {
+        let current = self
+            .connection
+            .query_row(
+                "SELECT size, modified_ns, content_hash, parser_version FROM sources WHERE path = ?1",
+                [source.path.to_string_lossy().as_ref()],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, u32>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        Ok(
+            current.is_some_and(|(size, modified_ns, hash, parser_version)| {
+                Some(size) == i64::try_from(source.size).ok()
+                    && modified_ns == source.modified_ns.to_string()
+                    && hash == source.content_hash
+                    && parser_version == source.parser_version
+            }),
+        )
+    }
+
+    /// Records a successfully processed source fingerprint.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot persist the source record.
+    pub fn record_source(&self, source: &SourceFingerprint) -> Result<(), StorageError> {
+        let size = i64::try_from(source.size).map_err(|_| StorageError::IntegerOverflow)?;
+        self.connection.execute(
+            "INSERT INTO sources(path, size, modified_ns, content_hash, parser_version, processed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(path) DO UPDATE SET size=excluded.size, modified_ns=excluded.modified_ns,
+             content_hash=excluded.content_hash, parser_version=excluded.parser_version,
+             processed_at=excluded.processed_at",
+            params![
+                source.path.to_string_lossy(),
+                size,
+                source.modified_ns.to_string(),
+                source.content_hash,
+                source.parser_version,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Replaces the stored evidence for correction candidates while retaining
+    /// any review decision attached to the same stable candidate identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot persist the candidates atomically.
+    pub fn upsert_candidates(
+        &mut self,
+        candidates: &[CorrectionCandidate],
+    ) -> Result<(), StorageError> {
+        let transaction = self.connection.transaction()?;
+        for candidate in candidates {
+            let id = candidate_id(&candidate.canonical_text);
+            let occurrences =
+                i64::try_from(candidate.occurrences).map_err(|_| StorageError::IntegerOverflow)?;
+            transaction.execute(
+                "INSERT INTO candidates(id, canonical_text, occurrences, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET canonical_text=excluded.canonical_text,
+                 occurrences=excluded.occurrences, updated_at=excluded.updated_at",
+                params![
+                    id,
+                    candidate.canonical_text,
+                    occurrences,
+                    Utc::now().to_rfc3339()
+                ],
+            )?;
+            transaction.execute("DELETE FROM evidence WHERE candidate_id = ?1", [&id])?;
+            for evidence in &candidate.evidence {
+                transaction.execute(
+                    "INSERT OR IGNORE INTO evidence(candidate_id, session_id, message_id, user_text, preceding_agent_text)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        id,
+                        evidence.session_id.as_str(),
+                        evidence.message_id.as_ref().map(MessageId::as_str),
+                        evidence.user_text,
+                        evidence.preceding_agent_text,
+                    ],
+                )?;
+            }
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Loads all correction candidates and their evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot decode a stored row.
+    pub fn load_candidates(&self) -> Result<Vec<CorrectionCandidate>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, canonical_text, occurrences FROM candidates ORDER BY occurrences DESC, canonical_text",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        let mut candidates = Vec::new();
+        for row in rows {
+            let (id, canonical_text, occurrences) = row?;
+            let occurrences =
+                usize::try_from(occurrences).map_err(|_| StorageError::IntegerOverflow)?;
+            let mut evidence_statement = self.connection.prepare(
+                "SELECT session_id, message_id, user_text, preceding_agent_text
+                 FROM evidence WHERE candidate_id = ?1 ORDER BY session_id, message_id",
+            )?;
+            let evidence = evidence_statement
+                .query_map([id], |row| {
+                    Ok(CorrectionEvidence {
+                        session_id: SessionId::new(row.get::<_, String>(0)?),
+                        message_id: row.get::<_, Option<String>>(1)?.map(MessageId::new),
+                        user_text: row.get(2)?,
+                        preceding_agent_text: row.get(3)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            candidates.push(CorrectionCandidate {
+                canonical_text,
+                occurrences,
+                evidence,
+            });
+        }
+        Ok(candidates)
+    }
+
+    /// Persists an accept/reject decision independently from future re-analysis.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the candidate is missing or `SQLite` cannot persist
+    /// the decision.
+    pub fn record_decision(
+        &self,
+        candidate_text: &str,
+        decision: &ReviewDecision,
+    ) -> Result<(), StorageError> {
+        let id = candidate_id(candidate_text);
+        let scope_json = serde_json::to_string(&decision.scope)?;
+        let visibility = serde_json::to_string(&decision.visibility)?;
+        let status = serde_json::to_string(&decision.status)?;
+        self.connection.execute(
+            "INSERT INTO review_decisions(candidate_id, status, edited_text, scope_json, visibility, decided_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(candidate_id) DO UPDATE SET status=excluded.status, edited_text=excluded.edited_text,
+             scope_json=excluded.scope_json, visibility=excluded.visibility, decided_at=excluded.decided_at",
+            params![id, status, decision.edited_text, scope_json, visibility, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieves the latest review decision for a candidate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` or the stored JSON representation is invalid.
+    pub fn decision(&self, candidate_text: &str) -> Result<Option<ReviewDecision>, StorageError> {
+        let id = candidate_id(candidate_text);
+        let stored = self.connection.query_row(
+            "SELECT status, edited_text, scope_json, visibility FROM review_decisions WHERE candidate_id = ?1",
+            [id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
+        ).optional()?;
+        stored
+            .map(|(status, edited_text, scope, visibility)| {
+                Ok(ReviewDecision {
+                    status: serde_json::from_str(&status)?,
+                    edited_text,
+                    scope: serde_json::from_str(&scope)?,
+                    visibility: serde_json::from_str(&visibility)?,
+                })
+            })
+            .transpose()
+    }
+}
+
+#[must_use]
+pub fn candidate_id(text: &str) -> String {
+    format!(
+        "candidate_{}",
+        &blake3::hash(text.as_bytes()).to_hex()[..16]
+    )
+}
+
+#[derive(Debug, Error)]
+pub enum StorageError {
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("could not read {path}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("invalid stored JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("integer value cannot be represented by SQLite or this platform")]
+    IntegerOverflow,
+}

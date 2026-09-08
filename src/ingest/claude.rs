@@ -1,5 +1,5 @@
 use super::{IngestError, SessionRef, SessionSource, jsonl};
-use crate::domain::{AgentSource, Event, Message, NormalizedSession, Role};
+use crate::domain::{AgentSource, Event, Message, MessageId, NormalizedSession, Role};
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -49,7 +49,10 @@ fn parse_value(session: &mut NormalizedSession, value: &Value) {
 
     if let Some(content) = message.get("content").and_then(jsonl::text_content) {
         session.messages.push(Message {
-            id: value.get("uuid").and_then(Value::as_str).map(str::to_owned),
+            id: value
+                .get("uuid")
+                .and_then(Value::as_str)
+                .map(MessageId::from),
             role,
             content,
             timestamp: jsonl::timestamp(value),

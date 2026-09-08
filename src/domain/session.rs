@@ -1,3 +1,4 @@
+use super::{MessageId, SessionId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -21,7 +22,7 @@ pub enum Role {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Message {
-    pub id: Option<String>,
+    pub id: Option<MessageId>,
     pub role: Role,
     pub content: String,
     pub timestamp: Option<DateTime<Utc>>,
@@ -35,7 +36,7 @@ pub struct Event {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedSession {
-    pub id: String,
+    pub id: SessionId,
     pub source: AgentSource,
     pub project: Option<PathBuf>,
     pub started_at: Option<DateTime<Utc>>,
@@ -47,7 +48,7 @@ impl NormalizedSession {
     #[must_use]
     pub fn new(id: impl Into<String>, source: AgentSource) -> Self {
         Self {
-            id: id.into(),
+            id: SessionId::new(id),
             source,
             project: None,
             started_at: None,

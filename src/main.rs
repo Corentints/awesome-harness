@@ -133,7 +133,10 @@ fn mistakes(arguments: &MistakesArgs) -> Result<()> {
         shown += 1;
         println!("{}× {}", candidate.occurrences, candidate.canonical_text);
         for evidence in &candidate.evidence {
-            let message = evidence.message_id.as_deref().unwrap_or("unknown-message");
+            let message = evidence
+                .message_id
+                .as_ref()
+                .map_or("unknown-message", agentctx::domain::MessageId::as_str);
             println!("  - session {} / {}", evidence.session_id, message);
         }
     }

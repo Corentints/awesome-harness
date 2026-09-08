@@ -1,3 +1,4 @@
+use super::RuleId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -65,7 +66,7 @@ pub struct Evidence {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Rule {
-    pub id: String,
+    pub id: RuleId,
     pub canonical_text: String,
     pub kind: KnowledgeKind,
     pub scope: RuleScope,

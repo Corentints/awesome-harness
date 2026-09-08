@@ -4,3 +4,4 @@ pub mod domain;
 pub mod ingest;
 pub mod project;
 pub mod repository;
+pub mod storage;

@@ -25,9 +25,9 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Scanner les fichiers suivis par Git avec la crate `ignore`.
 - [x] Extraire package manager, commandes, outils de test et dossiers générés.
 - [ ] Importer `AGENTS.md`, `CLAUDE.md` et `.claude/**` existants.
-- [ ] Concevoir le schéma SQLite et les migrations initiales.
-- [ ] Stocker les références, hashes et versions de parseur pour l'indexation incrémentale.
-- [ ] Persister candidats, preuves et décisions de revue.
+- [x] Concevoir le schéma SQLite et les migrations initiales.
+- [x] Stocker les références, hashes et versions de parseur pour l'indexation incrémentale.
+- [x] Persister candidats, preuves et décisions de revue.
 - [ ] Définir `InferenceProvider` sans dépendance fournisseur dans le domaine.
 - [ ] Définir le JSON Schema de sortie et ses validations.
 - [ ] Implémenter un faux provider déterministe pour les tests.

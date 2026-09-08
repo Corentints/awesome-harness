@@ -30,7 +30,7 @@ fn parses_codex_rollout_messages_and_metadata() {
     let references = source.discover().expect("fixture discovery should work");
     let session = source.parse(&references[0]).expect("fixture should parse");
 
-    assert_eq!(session.id, "codex-session-1");
+    assert_eq!(session.id.as_str(), "codex-session-1");
     assert_eq!(session.source, AgentSource::Codex);
     assert_eq!(session.project, Some(PathBuf::from("/projects/example")));
     assert_eq!(session.messages.len(), 3);

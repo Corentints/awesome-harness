@@ -1,4 +1,4 @@
-use crate::domain::{NormalizedSession, Role};
+use crate::domain::{MessageId, NormalizedSession, Role, SessionId};
 use std::collections::BTreeMap;
 
 const SIGNALS: &[&str] = &[
@@ -27,8 +27,8 @@ const CORRECTION_PREFIXES: &[&str] = &["no,", "non,", "no:", "non:", "je t'ai d√
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CorrectionEvidence {
-    pub session_id: String,
-    pub message_id: Option<String>,
+    pub session_id: SessionId,
+    pub message_id: Option<MessageId>,
     pub user_text: String,
     pub preceding_agent_text: Option<String>,
 }
