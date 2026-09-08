@@ -1,8 +1,10 @@
 use agentctx::{
     analysis::find_corrections,
+    config::{Config, default_user_config_path},
     domain::NormalizedSession,
     ingest::{ClaudeSessionSource, CodexSessionSource, SessionSource},
     project::Project,
+    repository,
 };
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
@@ -19,8 +21,17 @@ struct Cli {
 enum Command {
     /// Print the currently implemented capabilities.
     Status,
+    /// Detect a project and create its default configuration.
+    Init(InitArgs),
     /// Report repeated explicit instructions and agent corrections.
     Mistakes(MistakesArgs),
+}
+
+#[derive(Debug, Args)]
+struct InitArgs {
+    /// Git project to initialize.
+    #[arg(default_value = ".")]
+    project: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -43,10 +54,58 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Status) => println!("AgentContext prototype: session ingestion"),
+        Some(Command::Init(arguments)) => init(&arguments)?,
         Some(Command::Mistakes(arguments)) => mistakes(&arguments)?,
         None => println!("Run `agentctx --help` to get started."),
     }
     Ok(())
+}
+
+fn init(arguments: &InitArgs) -> Result<()> {
+    let project = Project::detect(&arguments.project).context("could not detect project")?;
+    let config_path = Config::write_project_default(&project.root)?;
+    let config = Config::load(default_user_config_path().as_deref(), &project.root)?;
+    let facts = repository::scan(&project)?;
+
+    println!("Project detected: {}", project.name);
+    println!("Tracked files: {}", facts.tracked_files.len());
+    println!(
+        "Package manager: {}",
+        facts.package_manager.as_deref().unwrap_or("not detected")
+    );
+    println!(
+        "Test tools: {}",
+        if facts.test_tools.is_empty() {
+            "none".to_owned()
+        } else {
+            facts.test_tools.join(", ")
+        }
+    );
+    println!("Existing instructions: {}", facts.instructions.len());
+    print_source_availability("Claude Code", default_claude_root());
+    print_source_availability("Codex", default_codex_root());
+    println!("Configuration: {}", config_path.display());
+    println!("Minimum occurrences: {}", config.analysis.min_occurrences);
+    Ok(())
+}
+
+fn print_source_availability(name: &str, path: Option<PathBuf>) {
+    match path {
+        Some(path) if path.is_dir() => println!("{name} sessions: available ({})", path.display()),
+        Some(path) => println!("{name} sessions: not found ({})", path.display()),
+        None => println!("{name} sessions: home directory unavailable"),
+    }
+}
+
+fn default_claude_root() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude/projects"))
+}
+
+fn default_codex_root() -> Option<PathBuf> {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
+        .map(|root| root.join("sessions"))
 }
 
 fn mistakes(arguments: &MistakesArgs) -> Result<()> {

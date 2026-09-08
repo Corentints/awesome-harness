@@ -20,10 +20,10 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 
 ## P0 — boucle V0.1
 
-- [ ] Ajouter la configuration utilisateur et `.agentctx.toml` avec fusion documentée.
-- [ ] Implémenter `agentctx init` et la détection des sources disponibles.
-- [ ] Scanner les fichiers suivis par Git avec la crate `ignore`.
-- [ ] Extraire package manager, commandes, outils de test et dossiers générés.
+- [x] Ajouter la configuration utilisateur et `.agentctx.toml` avec fusion documentée.
+- [x] Implémenter `agentctx init` et la détection des sources disponibles.
+- [x] Scanner les fichiers suivis par Git avec la crate `ignore`.
+- [x] Extraire package manager, commandes, outils de test et dossiers générés.
 - [ ] Importer `AGENTS.md`, `CLAUDE.md` et `.claude/**` existants.
 - [ ] Concevoir le schéma SQLite et les migrations initiales.
 - [ ] Stocker les références, hashes et versions de parseur pour l'indexation incrémentale.
