@@ -72,7 +72,7 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Définir un ordre de fallback Claude/Codex explicite, sans contourner le consentement d'inférence distante.
 - [x] Distinguer indisponibilité, authentification, quota et rate limit ; conserver le travail et permettre une reprise sans boucle infinie.
 - [x] Afficher le provider choisi, les volumes, les lots traités et l'usage retourné par la CLI lorsqu'il est disponible.
-- [ ] Documenter que les providers CLI évitent une clé API et une facturation API séparée, mais consomment les quotas de l'abonnement associé.
+- [x] Documenter que les providers CLI évitent une clé API et une facturation API séparée, mais consomment les quotas de l'abonnement associé.
 - [ ] Comparer sur un corpus réel le rappel, les faux positifs et le coût entre filtrage par mots-clés et analyse priorisée de tous les inputs.
 
 ## P1 — V0.2 maintenance
@@ -80,7 +80,8 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Formaliser les règles d'inférence de scope et leurs explications.
 - [x] Calculer la diversité de projets pour les candidats globaux.
 - [x] Implémenter `agentctx analyze --global`.
-- [ ] Détecter les contradictions exactes puis sémantiques.
+- [x] Détecter les contradictions exactes entre directives de même portée.
+- [ ] Détecter les contradictions sémantiques entre formulations différentes.
 - [x] Suivre `last_confirmed_at`, `last_used_at` et `valid_until`.
 - [x] Détecter une règle contredite par l'état courant du dépôt.
 - [x] Vérifier l'existence et la validité des commandes persistées.
