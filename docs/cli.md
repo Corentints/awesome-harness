@@ -12,6 +12,7 @@ agentctx review
 agentctx diff
 agentctx apply
 agentctx explain <rule-id>
+agentctx evaluate --corpus <dir> --observations <run.json>
 ```
 
 ## Commandes
@@ -51,6 +52,10 @@ Relit les cibles, vérifie qu'elles n'ont pas changé depuis le diff, affiche le
 ### `agentctx explain <rule-id>`
 
 Affiche texte canonique, statut, scope, score et preuves d'une règle. Cette commande doit fonctionner hors ligne.
+
+### `agentctx evaluate`
+
+Valide et agrège les observations d'une variante de benchmark par rapport à un corpus versionné. Cette commande est locale : elle mesure les résultats fournis mais ne lance pas encore Claude ou Codex pour produire les observations.
 
 ## Commandes postérieures
 

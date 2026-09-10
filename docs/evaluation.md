@@ -16,6 +16,8 @@ Une session passée peut devenir un cas de test contenant : tâche, actions, err
 
 Le format versionné est un fichier JSON par cas. `prompt` contient uniquement l'information disponible au début de la tâche ; `oracle` reste réservé au harness et décrit les commandes et chemins requis ou interdits. `fixture_files` permet de reconstruire un dépôt minimal. Tous les chemins doivent être relatifs et rester dans la fixture. Des exemples synthétiques vivent dans `tests/fixtures/evaluation/`.
 
+Un fichier d'observations associe les résultats d'une variante (`no_context`, `current_context` ou `compiled_context`) aux identifiants des cas. La commande `agentctx evaluate --corpus <dir> --observations <run.json>` refuse les cas manquants ou inconnus et agrège les métriques sans lancer elle-même un agent distant.
+
 Trois variantes sont comparées :
 
 - sans contexte persistant ;

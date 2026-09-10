@@ -7,6 +7,7 @@ use agentctx::{
     config::{Config, default_user_config_path},
     doctor,
     domain::{MessageId, NormalizedSession},
+    evaluation,
     ingest::{ClaudeSessionSource, CodexSessionSource, SessionSource},
     llm::{
         ClaudeCliProvider, CodexCliProvider, InferenceProvider, InferenceSegment, InferenceUsage,
@@ -58,6 +59,8 @@ enum Command {
     Doctor(OutputArgs),
     /// Report deterministic context selection under the configured token budget.
     Optimize(OutputArgs),
+    /// Score one set of benchmark observations against a corpus.
+    Evaluate(EvaluateArgs),
 }
 
 #[derive(Debug, Args)]
@@ -168,6 +171,16 @@ struct ApplyArgs {
     yes: bool,
 }
 
+#[derive(Debug, Args)]
+struct EvaluateArgs {
+    /// Directory containing evaluation case JSON files.
+    #[arg(long)]
+    corpus: PathBuf,
+    /// JSON observations for one benchmark variant.
+    #[arg(long)]
+    observations: PathBuf,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -181,9 +194,31 @@ fn main() -> Result<()> {
         Some(Command::Apply(arguments)) => apply(&arguments)?,
         Some(Command::Doctor(arguments)) => doctor(&arguments)?,
         Some(Command::Optimize(arguments)) => optimize(&arguments)?,
+        Some(Command::Evaluate(arguments)) => evaluate(&arguments)?,
         None => println!("Run `agentctx --help` to get started."),
     }
     Ok(())
+}
+
+fn evaluate(arguments: &EvaluateArgs) -> Result<()> {
+    let cases = evaluation::load_corpus(&arguments.corpus)?;
+    let run = evaluation::load_observation_run(&arguments.observations)?;
+    let report = evaluation::score_run(&cases, &run)?;
+    println!("Evaluation: {:?}", report.variant);
+    println!("  Passed: {}/{}", report.passed, report.cases);
+    println!("  Violations: {}", report.violations);
+    println!("  Corrections: {}", report.corrections);
+    print_optional_metric("Tokens", report.total_tokens);
+    print_optional_metric("Turns", report.turns);
+    print_optional_metric("Duration (ms)", report.duration_ms);
+    Ok(())
+}
+
+fn print_optional_metric(name: &str, value: Option<u64>) {
+    value.map_or_else(
+        || println!("  {name}: not fully reported"),
+        |value| println!("  {name}: {value}"),
+    );
 }
 
 fn optimize(arguments: &OutputArgs) -> Result<()> {

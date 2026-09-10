@@ -103,7 +103,7 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Construire un petit corpus synthétique de tâches et contraintes observables.
 - [ ] Remplacer ou compléter le corpus synthétique par des cas historiques anonymisés.
 - [ ] Exécuter les variantes sans contexte, contexte actuel et contexte compilé.
-- [ ] Mesurer réussite, corrections, violations, tokens, tours et durée.
+- [x] Mesurer réussite, corrections, violations, tokens, tours et durée à partir d'observations versionnées.
 - [ ] Calibrer le classement des règles à partir de ces résultats.
 - [x] Implémenter la sélection sous budget de tokens.
 - [x] Implémenter `agentctx optimize` avec rapport avant/après.

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -59,6 +60,34 @@ pub struct CaseScore {
     pub duration_ms: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BenchmarkVariant {
+    NoContext,
+    CurrentContext,
+    CompiledContext,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObservationRun {
+    pub schema_version: u32,
+    pub variant: BenchmarkVariant,
+    pub cases: BTreeMap<String, CaseObservation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BenchmarkReport {
+    pub variant: BenchmarkVariant,
+    pub cases: usize,
+    pub passed: usize,
+    pub violations: usize,
+    pub corrections: usize,
+    pub total_tokens: Option<u64>,
+    pub turns: Option<u64>,
+    pub duration_ms: Option<u64>,
+}
+
 /// Loads and validates every JSON case directly contained in a corpus.
 ///
 /// # Errors
@@ -95,6 +124,86 @@ pub fn load_corpus(root: &Path) -> Result<Vec<HistoricalCase>, EvaluationError> 
         cases.push(case);
     }
     Ok(cases)
+}
+
+/// Loads a versioned set of observations produced by one benchmark variant.
+///
+/// # Errors
+///
+/// Returns an error when the file is unreadable or does not match the schema.
+pub fn load_observation_run(path: &Path) -> Result<ObservationRun, EvaluationError> {
+    let content = fs::read_to_string(path).map_err(|source| EvaluationError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let run = serde_json::from_str::<ObservationRun>(&content).map_err(|source| {
+        EvaluationError::Json {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    if run.schema_version != EVALUATION_SCHEMA_VERSION {
+        return Err(EvaluationError::Invalid {
+            path: path.to_path_buf(),
+            message: format!(
+                "unsupported schema version {}, expected {EVALUATION_SCHEMA_VERSION}",
+                run.schema_version
+            ),
+        });
+    }
+    Ok(run)
+}
+
+/// Validates case coverage and aggregates observable metrics for one variant.
+///
+/// # Errors
+///
+/// Returns an error when observations are missing or refer to unknown cases.
+pub fn score_run(
+    cases: &[HistoricalCase],
+    run: &ObservationRun,
+) -> Result<BenchmarkReport, EvaluationError> {
+    let case_ids = cases
+        .iter()
+        .map(|case| case.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let observation_ids = run
+        .cases
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if case_ids != observation_ids {
+        let missing = case_ids
+            .difference(&observation_ids)
+            .map(|id| (*id).to_owned())
+            .collect::<Vec<_>>();
+        let unknown = observation_ids
+            .difference(&case_ids)
+            .map(|id| (*id).to_owned())
+            .collect::<Vec<_>>();
+        return Err(EvaluationError::RunMismatch { missing, unknown });
+    }
+
+    let scores = cases
+        .iter()
+        .map(|case| score_case(case, &run.cases[&case.id]))
+        .collect::<Vec<_>>();
+    Ok(BenchmarkReport {
+        variant: run.variant,
+        cases: scores.len(),
+        passed: scores.iter().filter(|score| score.passed).count(),
+        violations: scores.iter().map(|score| score.violations.len()).sum(),
+        corrections: scores.iter().map(|score| score.corrections).sum(),
+        total_tokens: sum_complete(scores.iter().map(|score| score.total_tokens)),
+        turns: sum_complete(scores.iter().map(|score| score.turns)),
+        duration_ms: sum_complete(scores.iter().map(|score| score.duration_ms)),
+    })
+}
+
+fn sum_complete(mut values: impl Iterator<Item = Option<u64>>) -> Option<u64> {
+    values.try_fold(0_u64, |total, value| {
+        value.map(|value| total.saturating_add(value))
+    })
 }
 
 /// Scores only observable behavior. The oracle is never part of the task
@@ -197,6 +306,13 @@ pub enum EvaluationError {
     },
     #[error("invalid evaluation case at {path}: {message}")]
     Invalid { path: PathBuf, message: String },
+    #[error(
+        "observation cases do not match the corpus (missing: {missing:?}, unknown: {unknown:?})"
+    )]
+    RunMismatch {
+        missing: Vec<String>,
+        unknown: Vec<String>,
+    },
 }
 
 #[cfg(test)]
@@ -267,5 +383,48 @@ mod tests {
                 .expect_err("unsafe path")
                 .contains("relative")
         );
+    }
+
+    #[test]
+    fn aggregates_a_complete_observation_run() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/evaluation");
+        let cases = load_corpus(&root).expect("valid corpus");
+        let run = ObservationRun {
+            schema_version: EVALUATION_SCHEMA_VERSION,
+            variant: BenchmarkVariant::CompiledContext,
+            cases: BTreeMap::from([
+                (
+                    "generated-files".to_owned(),
+                    CaseObservation {
+                        success: true,
+                        modified_paths: vec!["src/client.ts".into()],
+                        input_tokens: Some(100),
+                        output_tokens: Some(20),
+                        turns: Some(2),
+                        duration_ms: Some(500),
+                        ..CaseObservation::default()
+                    },
+                ),
+                (
+                    "package-manager".to_owned(),
+                    CaseObservation {
+                        success: true,
+                        commands: vec!["pnpm test".to_owned()],
+                        input_tokens: Some(80),
+                        output_tokens: Some(20),
+                        turns: Some(1),
+                        duration_ms: Some(300),
+                        ..CaseObservation::default()
+                    },
+                ),
+            ]),
+        };
+
+        let report = score_run(&cases, &run).expect("complete run");
+
+        assert_eq!(report.passed, 2);
+        assert_eq!(report.total_tokens, Some(220));
+        assert_eq!(report.turns, Some(3));
+        assert_eq!(report.duration_ms, Some(800));
     }
 }

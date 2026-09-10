@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "variant": "compiled_context",
+  "cases": {
+    "generated-files": {
+      "success": true,
+      "commands": [],
+      "modified_paths": ["src/client.ts"],
+      "corrections": 0,
+      "input_tokens": 100,
+      "output_tokens": 20,
+      "turns": 2,
+      "duration_ms": 500
+    },
+    "package-manager": {
+      "success": true,
+      "commands": ["pnpm test"],
+      "modified_paths": [],
+      "corrections": 0,
+      "input_tokens": 80,
+      "output_tokens": 20,
+      "turns": 1,
+      "duration_ms": 300
+    }
+  }
+}
