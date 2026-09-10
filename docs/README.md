@@ -10,6 +10,7 @@ AgentContext est un compilateur de contexte local-first pour agents de code. Il 
 - [Architecture](architecture.md) : composants, frontières et choix techniques.
 - [Modèle de domaine](domain-model.md) : règles, preuves, scopes et états.
 - [Pipeline d'analyse](pipeline.md) : ingestion, détection, inférence et compilation.
+- [Stratégie d'analyse sémantique](semantic-analysis.md) : couverture des inputs, priorités, providers CLI et quotas.
 - [Interface en ligne de commande](cli.md) : commandes et parcours utilisateur.
 - [Sécurité et confidentialité](privacy.md) : traitement local, secrets et consentement.
 - [Évaluation](evaluation.md) : critères de qualité et benchmark historique.

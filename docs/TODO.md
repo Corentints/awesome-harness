@@ -59,6 +59,22 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Tester les symlinks et changements de fichiers entre `diff` et `apply`.
 - [x] Vérifier que les logs ne contiennent ni secrets ni extraits complets.
 
+## P1 — couverture sémantique et providers CLI
+
+- [ ] Faire entrer chaque véritable message utilisateur dans l'index d'analyse, même sans marqueur explicite.
+- [ ] Écarter les enveloppes techniques, contenus injectés, doublons et messages vides avant toute inférence.
+- [ ] Remplacer le filtre binaire par une priorité explicable : correction, préférence durable, ambiguïté ou contenu probablement ponctuel.
+- [ ] Persister le hash et l'état d'analyse de chaque message afin de ne retraiter que les entrées nouvelles ou modifiées.
+- [ ] Traiter les messages par lots ordonnés sous un budget configurable de caractères ou de tokens.
+- [ ] Intégrer les suggestions sémantiques du provider aux candidats persistés avec leurs preuves, au lieu de seulement les afficher.
+- [ ] Implémenter `ClaudeCliProvider` derrière la même interface que `CodexCliProvider`.
+- [ ] Ajouter un mode `provider = "auto"` qui détecte les CLI installées et authentifiées.
+- [ ] Définir un ordre de fallback Claude/Codex explicite, sans contourner le consentement d'inférence distante.
+- [ ] Distinguer indisponibilité, authentification, quota et rate limit ; conserver le travail et permettre une reprise sans boucle infinie.
+- [ ] Afficher le provider choisi, les volumes, les lots traités et l'usage retourné par la CLI lorsqu'il est disponible.
+- [ ] Documenter que les providers CLI évitent une clé API et une facturation API séparée, mais consomment les quotas de l'abonnement associé.
+- [ ] Comparer sur un corpus réel le rappel, les faux positifs et le coût entre filtrage par mots-clés et analyse priorisée de tous les inputs.
+
 ## P1 — V0.2 maintenance
 
 - [x] Formaliser les règles d'inférence de scope et leurs explications.

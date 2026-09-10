@@ -39,6 +39,10 @@ Critère de sortie : un utilisateur peut analyser, revoir et appliquer un contex
 
 Livrables :
 
+- indexation de tous les véritables messages utilisateur, sans dépendre uniquement de mots-clés ;
+- priorisation déterministe et traitement sémantique par lots sous budget ;
+- providers CLI Codex et Claude avec sélection automatique et fallback contrôlé ;
+- reprise explicite après indisponibilité, erreur d'authentification ou quota atteint ;
 - inférence de scope plus robuste ;
 - analyse globale multi-projets ;
 - détection des conflits et de l'obsolescence ;
@@ -46,7 +50,7 @@ Livrables :
 - vérification des commandes par rapport au dépôt actuel ;
 - explication des scores et alertes.
 
-Critère de sortie : l'outil détecte un changement d'outillage réel, propose la règle de remplacement et explique pourquoi l'ancienne est obsolète.
+Critère de sortie : l'outil retrouve une préférence récurrente formulée sans mot-clé attendu, détecte un changement d'outillage réel et explique la règle ou le remplacement proposé, sans retraiter tout l'historique.
 
 ## V0.3 — scopes natifs et revue avancée
 

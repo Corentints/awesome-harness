@@ -13,9 +13,11 @@ Les transcriptions d'agents peuvent contenir du code propriétaire, des données
 
 ## Providers
 
-Les CLI locales Claude Code ou Codex peuvent elles-mêmes communiquer avec un service. AgentContext doit l'indiquer explicitement : « provider CLI » ne signifie pas « modèle exécuté localement ».
+Les CLI locales Claude Code ou Codex peuvent elles-mêmes communiquer avec un service. AgentContext doit l'indiquer explicitement : « provider CLI » ne signifie pas « modèle exécuté localement ». Elles peuvent éviter de configurer une clé API et une facturation API séparée, mais elles utilisent les limites et quotas du compte ou de l'abonnement connecté ; elles ne sont donc pas considérées comme gratuites.
 
 Une API distante n'est utilisable que si `privacy.allow_remote_inference = true`. L'interface doit montrer quel contenu va être envoyé, vers quel provider et après quelle redaction.
+
+La sélection automatique et le fallback sont soumis au même consentement. AgentContext ne doit jamais basculer silencieusement vers un provider dont le traitement distant n'a pas été autorisé. Une erreur de quota, de rate limit ou d'authentification doit être identifiable dans le rapport sans exposer le contenu analysé.
 
 ## Redaction
 
@@ -33,7 +35,7 @@ Les masques doivent être stables dans un même lot afin de conserver les relati
 
 ## Minimisation des données
 
-Seuls les segments plausiblement utiles sont envoyés à l'inférence. Les messages complets et fichiers du dépôt ne doivent pas être transmis par commodité. Chaque requête garde localement la liste des preuves incluses, le provider et la version du schéma, sans stocker de secret.
+Tous les véritables messages utilisateur peuvent être considérés pour l'analyse, mais ils ne sont pas nécessairement envoyés immédiatement. La priorisation, le traitement incrémental et les budgets par lot limitent les données transmises. Les conversations complètes et fichiers du dépôt ne doivent pas être envoyés par commodité. Chaque requête garde localement la liste des preuves incluses, le provider et la version du schéma, sans stocker de secret.
 
 ## Écriture des fichiers cibles
 
