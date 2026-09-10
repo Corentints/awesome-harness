@@ -19,6 +19,18 @@ pub struct InferenceRequest {
     pub segments: Vec<InferenceSegment>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InferenceBatch {
+    pub request: InferenceRequest,
+    pub segment_indices: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchPlan {
+    pub batches: Vec<InferenceBatch>,
+    pub deferred_indices: Vec<usize>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InferenceResponse {
     pub rules: Vec<InferredRule>,
@@ -74,6 +86,58 @@ pub fn batches(segments: &[InferenceSegment], batch_size: usize) -> Vec<Inferenc
             segments: segments.to_vec(),
         })
         .collect()
+}
+
+/// Groups whole inputs under both count and character limits. An individual
+/// input larger than the character budget is deferred rather than truncated.
+#[must_use]
+pub fn batches_with_character_budget(
+    segments: &[InferenceSegment],
+    batch_size: usize,
+    max_characters: usize,
+) -> BatchPlan {
+    let batch_size = batch_size.max(1);
+    let max_characters = max_characters.max(1);
+    let mut planned = Vec::new();
+    let mut deferred = Vec::new();
+    let mut current_segments = Vec::new();
+    let mut current_indices = Vec::new();
+    let mut current_characters = 0;
+
+    for (index, segment) in segments.iter().enumerate() {
+        let characters = segment.text.chars().count();
+        if characters > max_characters {
+            deferred.push(index);
+            continue;
+        }
+        if !current_segments.is_empty()
+            && (current_segments.len() == batch_size
+                || current_characters + characters > max_characters)
+        {
+            planned.push(InferenceBatch {
+                request: InferenceRequest {
+                    segments: std::mem::take(&mut current_segments),
+                },
+                segment_indices: std::mem::take(&mut current_indices),
+            });
+            current_characters = 0;
+        }
+        current_segments.push(segment.clone());
+        current_indices.push(index);
+        current_characters += characters;
+    }
+    if !current_segments.is_empty() {
+        planned.push(InferenceBatch {
+            request: InferenceRequest {
+                segments: current_segments,
+            },
+            segment_indices: current_indices,
+        });
+    }
+    BatchPlan {
+        batches: planned,
+        deferred_indices: deferred,
+    }
 }
 
 #[must_use]
@@ -178,6 +242,33 @@ mod tests {
                 .collect::<Vec<_>>(),
             [2, 2, 1]
         );
+    }
+
+    #[test]
+    fn batches_respect_character_budget_and_defer_oversized_inputs() {
+        let segments = ["1234", "5678", "too-long-input", "90"]
+            .into_iter()
+            .map(|text| InferenceSegment {
+                message_id: None,
+                text: text.to_owned(),
+            })
+            .collect::<Vec<_>>();
+
+        let plan = batches_with_character_budget(&segments, 3, 8);
+
+        assert_eq!(plan.batches.len(), 2);
+        assert_eq!(plan.batches[0].segment_indices, [0, 1]);
+        assert_eq!(plan.batches[1].segment_indices, [3]);
+        assert_eq!(plan.deferred_indices, [2]);
+        assert!(plan.batches.iter().all(|batch| {
+            batch
+                .request
+                .segments
+                .iter()
+                .map(|segment| segment.text.chars().count())
+                .sum::<usize>()
+                <= 8
+        }));
     }
 
     #[test]

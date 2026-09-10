@@ -32,6 +32,7 @@ pub struct AnalysisConfig {
 #[serde(default)]
 pub struct LlmConfig {
     pub provider: String,
+    pub max_batch_characters: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -69,6 +70,7 @@ impl Default for LlmConfig {
     fn default() -> Self {
         Self {
             provider: "none".to_owned(),
+            max_batch_characters: 24_000,
         }
     }
 }
@@ -210,5 +212,6 @@ mod tests {
         assert_eq!(config.analysis.max_context_tokens, 900);
         assert!(!config.privacy.allow_remote_inference);
         assert!(config.privacy.redact_secrets);
+        assert_eq!(config.llm.max_batch_characters, 24_000);
     }
 }

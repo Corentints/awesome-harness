@@ -7,7 +7,10 @@ use agentctx::{
     doctor,
     domain::NormalizedSession,
     ingest::{ClaudeSessionSource, CodexSessionSource, SessionSource},
-    llm::{CodexCliProvider, InferenceProvider, InferenceSegment, batches, infer_redacted},
+    llm::{
+        CodexCliProvider, InferenceProvider, InferenceSegment, batches_with_character_budget,
+        infer_redacted,
+    },
     optimize,
     privacy::Redactor,
     project::Project,
@@ -94,6 +97,9 @@ struct AnalyzeArgs {
     /// Maximum number of user inputs sent in one inference request.
     #[arg(long, default_value_t = 50)]
     batch_size: usize,
+    /// Maximum number of characters sent in one inference request.
+    #[arg(long)]
+    batch_characters: Option<usize>,
     /// Analyze sessions across all discovered projects.
     #[arg(long)]
     global: bool,
@@ -318,6 +324,9 @@ fn analyze(arguments: &AnalyzeArgs) -> Result<()> {
             &mut database,
             &pending,
             arguments.batch_size,
+            arguments
+                .batch_characters
+                .unwrap_or(config.llm.max_batch_characters),
         )?;
     }
     Ok(())
@@ -329,6 +338,7 @@ fn run_semantic_inference(
     database: &mut Database,
     pending: &[agentctx::storage::PendingAnalysisInput],
     batch_size: usize,
+    max_batch_characters: usize,
 ) -> Result<()> {
     let provider: Box<dyn InferenceProvider> = match provider_name {
         "codex-cli" => Box::new(CodexCliProvider::new(&project.root)),
@@ -363,15 +373,19 @@ fn run_semantic_inference(
     );
     let mut redactor = Redactor::new();
     let mut inferred = Vec::new();
-    for (request, pending_batch) in batches(&segments, batch_size)
-        .into_iter()
-        .zip(pending.chunks(batch_size.max(1)))
-    {
-        inferred.extend(infer_redacted(provider.as_ref(), &request, &mut redactor)?.rules);
+    let plan = batches_with_character_budget(&segments, batch_size, max_batch_characters);
+    println!(
+        "  Inference batches: {} planned, {} oversized inputs deferred",
+        plan.batches.len(),
+        plan.deferred_indices.len()
+    );
+    for batch in plan.batches {
+        inferred.extend(infer_redacted(provider.as_ref(), &batch.request, &mut redactor)?.rules);
         database.mark_analysis_inputs_analyzed(
-            &pending_batch
+            &batch
+                .segment_indices
                 .iter()
-                .map(|pending| pending.id.clone())
+                .map(|index| pending[*index].id.clone())
                 .collect::<Vec<_>>(),
         )?;
     }

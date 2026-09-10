@@ -29,6 +29,7 @@ Options structurantes envisagées :
 - `--global` pour l'analyse multi-projets, à partir de la V0.2 ;
 - `--no-llm` pour limiter l'analyse aux faits et heuristiques ;
 - `--provider <name>` pour surcharger le provider configuré ;
+- `--batch-size <n>` et `--batch-characters <n>` pour borner chaque requête d'inférence ;
 - `--format json` pour l'automatisation future.
 
 ### `agentctx mistakes`
@@ -73,6 +74,7 @@ max_context_tokens = 2500
 
 [llm]
 provider = "codex-cli"
+max_batch_characters = 24000
 
 [privacy]
 allow_remote_inference = false
