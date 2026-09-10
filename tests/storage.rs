@@ -194,3 +194,24 @@ fn merges_inferred_evidence_without_losing_existing_evidence() {
     assert_eq!(stored[0].occurrences, 2);
     assert_eq!(stored[0].evidence.len(), 2);
 }
+
+#[test]
+fn recovers_when_a_column_was_added_before_its_migration_was_recorded() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let path = directory.path().join("state.db");
+    drop(Database::open(&path).expect("initial database"));
+    let connection = rusqlite::Connection::open(&path).expect("raw database");
+    connection
+        .execute("DELETE FROM schema_migrations WHERE version = 6", [])
+        .expect("simulate interrupted migration");
+    drop(connection);
+
+    let database = Database::open(&path).expect("recover migration");
+
+    assert!(
+        database
+            .pending_analysis_inputs(1)
+            .expect("query migrated table")
+            .is_empty()
+    );
+}

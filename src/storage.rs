@@ -179,61 +179,60 @@ impl Database {
             |row| row.get::<_, u32>(0),
         )?;
         if version < 1 {
-            self.connection.execute(
-                "INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?1)",
-                [Utc::now().to_rfc3339()],
-            )?;
+            self.record_migration(1)?;
         }
         if version < 2 {
-            self.connection.execute(
+            self.add_column_if_missing(
+                "evidence",
+                "source_path",
                 "ALTER TABLE evidence ADD COLUMN source_path TEXT NOT NULL DEFAULT ''",
-                [],
             )?;
-            self.connection.execute(
-                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
-                params![2, Utc::now().to_rfc3339()],
-            )?;
+            self.record_migration(2)?;
         }
         if version < 3 {
-            self.connection.execute(
+            self.add_column_if_missing(
+                "evidence",
+                "project_path",
                 "ALTER TABLE evidence ADD COLUMN project_path TEXT NOT NULL DEFAULT ''",
-                [],
             )?;
-            self.connection.execute(
-                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
-                params![3, Utc::now().to_rfc3339()],
-            )?;
+            self.record_migration(3)?;
         }
         if version < 4 {
-            self.connection.execute_batch(
-                "ALTER TABLE review_decisions ADD COLUMN last_confirmed_at TEXT;
-                 ALTER TABLE review_decisions ADD COLUMN last_used_at TEXT;
-                 ALTER TABLE review_decisions ADD COLUMN valid_until TEXT;",
-            )?;
-            self.connection.execute(
-                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
-                params![4, Utc::now().to_rfc3339()],
-            )?;
+            for (column, sql) in [
+                (
+                    "last_confirmed_at",
+                    "ALTER TABLE review_decisions ADD COLUMN last_confirmed_at TEXT",
+                ),
+                (
+                    "last_used_at",
+                    "ALTER TABLE review_decisions ADD COLUMN last_used_at TEXT",
+                ),
+                (
+                    "valid_until",
+                    "ALTER TABLE review_decisions ADD COLUMN valid_until TEXT",
+                ),
+            ] {
+                self.add_column_if_missing("review_decisions", column, sql)?;
+            }
+            self.record_migration(4)?;
         }
         if version < 5 {
             self.migrate_analysis_inputs()?;
         }
         if version < SCHEMA_VERSION {
-            self.connection.execute(
+            self.add_column_if_missing(
+                "analysis_inputs",
+                "project_path",
                 "ALTER TABLE analysis_inputs ADD COLUMN project_path TEXT NOT NULL DEFAULT ''",
-                [],
             )?;
-            self.connection.execute(
-                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
-                params![SCHEMA_VERSION, Utc::now().to_rfc3339()],
-            )?;
+            self.record_migration(SCHEMA_VERSION)?;
         }
         Ok(())
     }
 
     fn migrate_analysis_inputs(&self) -> Result<(), StorageError> {
         self.connection.execute_batch(
-            "CREATE TABLE analysis_inputs (
+            "CREATE TABLE IF NOT EXISTS analysis_inputs (
                  id TEXT PRIMARY KEY,
                  source_path TEXT NOT NULL,
                  session_id TEXT NOT NULL,
@@ -246,12 +245,35 @@ impl Database {
                  status TEXT NOT NULL,
                  updated_at TEXT NOT NULL
              );
-             CREATE INDEX analysis_inputs_pending
+             CREATE INDEX IF NOT EXISTS analysis_inputs_pending
              ON analysis_inputs(status, analysis_version, priority);",
         )?;
+        self.record_migration(5)?;
+        Ok(())
+    }
+
+    fn add_column_if_missing(
+        &self,
+        table: &str,
+        column: &str,
+        migration: &str,
+    ) -> Result<(), StorageError> {
+        let mut statement = self
+            .connection
+            .prepare(&format!("PRAGMA table_info({table})"))?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if !columns.iter().any(|existing| existing == column) {
+            self.connection.execute(migration, [])?;
+        }
+        Ok(())
+    }
+
+    fn record_migration(&self, version: u32) -> Result<(), StorageError> {
         self.connection.execute(
-            "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
-            params![5, Utc::now().to_rfc3339()],
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+            params![version, Utc::now().to_rfc3339()],
         )?;
         Ok(())
     }

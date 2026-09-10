@@ -111,7 +111,7 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 
 - [x] Choisir et documenter les plateformes officiellement supportées.
 - [x] Mettre en place les tests de compatibilité des formats de sessions.
-- [ ] Stabiliser les migrations SQLite et leur récupération après échec.
+- [x] Stabiliser les migrations SQLite et leur récupération après échec.
 - [ ] Ajouter une commande d'export, purge et diagnostic des données locales.
 - [ ] Préparer les paquets et binaires de distribution.
 - [x] Documenter l'extension par nouvelle source, cible ou provider.
