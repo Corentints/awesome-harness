@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "package-manager",
+  "description": "The project uses pnpm rather than npm.",
+  "prompt": "Install the declared dependencies and verify the project.",
+  "fixture_files": [
+    {
+      "path": "package.json",
+      "content": "{\"scripts\":{\"test\":\"vitest\"}}\n"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "content": "lockfileVersion: '9.0'\n"
+    }
+  ],
+  "oracle": {
+    "require_success": true,
+    "required_commands": ["pnpm test"],
+    "forbidden_commands": ["npm install", "npm test"],
+    "required_paths": [],
+    "forbidden_paths": []
+  }
+}

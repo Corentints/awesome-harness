@@ -3,6 +3,7 @@ pub mod artifacts;
 pub mod config;
 pub mod doctor;
 pub mod domain;
+pub mod evaluation;
 pub mod ingest;
 pub mod llm;
 pub mod optimize;

@@ -14,6 +14,8 @@ AgentContext ne doit pas présenter une note produite par un LLM comme une mesur
 
 Une session passée peut devenir un cas de test contenant : tâche, actions, erreur, correction et solution. Les informations postérieures à la tâche doivent être séparées du prompt de départ pour éviter toute fuite.
 
+Le format versionné est un fichier JSON par cas. `prompt` contient uniquement l'information disponible au début de la tâche ; `oracle` reste réservé au harness et décrit les commandes et chemins requis ou interdits. `fixture_files` permet de reconstruire un dépôt minimal. Tous les chemins doivent être relatifs et rester dans la fixture. Des exemples synthétiques vivent dans `tests/fixtures/evaluation/`.
+
 Trois variantes sont comparées :
 
 - sans contexte persistant ;

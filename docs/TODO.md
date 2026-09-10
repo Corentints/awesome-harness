@@ -99,8 +99,9 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 
 ## P2 — V0.4 évaluation
 
-- [ ] Définir un format de cas de test historique sans fuite de solution.
-- [ ] Construire un petit corpus de tâches et contraintes observables.
+- [x] Définir un format de cas de test historique sans fuite de solution.
+- [x] Construire un petit corpus synthétique de tâches et contraintes observables.
+- [ ] Remplacer ou compléter le corpus synthétique par des cas historiques anonymisés.
 - [ ] Exécuter les variantes sans contexte, contexte actuel et contexte compilé.
 - [ ] Mesurer réussite, corrections, violations, tokens, tours et durée.
 - [ ] Calibrer le classement des règles à partir de ces résultats.

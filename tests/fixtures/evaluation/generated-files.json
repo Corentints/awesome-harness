@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "generated-files",
+  "description": "A change must leave generated sources untouched.",
+  "prompt": "Update the client behavior and run the relevant tests.",
+  "fixture_files": [
+    {
+      "path": "src/client.ts",
+      "content": "export const mode = 'legacy';\n"
+    },
+    {
+      "path": "src/generated/client.ts",
+      "content": "// generated\n"
+    }
+  ],
+  "oracle": {
+    "require_success": true,
+    "required_commands": [],
+    "forbidden_commands": [],
+    "required_paths": ["src/client.ts"],
+    "forbidden_paths": ["src/generated/client.ts"]
+  }
+}
