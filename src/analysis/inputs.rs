@@ -1,4 +1,5 @@
 use crate::domain::{MessageId, NormalizedSession, Role, SessionId};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 const TECHNICAL_ONLY_PREFIXES: &[&str] = &[
@@ -27,14 +28,16 @@ const STRONG_SIGNALS: &[&str] = &[
 const CORRECTION_PREFIXES: &[&str] = &["no,", "non,", "no:", "non:"];
 const PREFERENCE_PREFIXES: &[&str] = &["prefer ", "préfère ", "use ", "utilise "];
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InputPriority {
     Low,
     Medium,
     High,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PriorityReason {
     OrdinaryRequest,
     Preference,

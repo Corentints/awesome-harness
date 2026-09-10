@@ -1,5 +1,7 @@
 use agentctx::{
-    analysis::{CorrectionCandidate, CorrectionEvidence},
+    analysis::{
+        CorrectionCandidate, CorrectionEvidence, InputPriority, PrioritizedInput, PriorityReason,
+    },
     domain::{MessageId, RuleScope, SessionId, Visibility},
     storage::{Database, DecisionStatus, ReviewDecision, SourceFingerprint},
 };
@@ -16,6 +18,17 @@ fn candidate() -> CorrectionCandidate {
             user_text: "No, always use pnpm.".to_owned(),
             preceding_agent_text: Some("I will use npm.".to_owned()),
         }],
+    }
+}
+
+fn input(text: &str) -> PrioritizedInput {
+    PrioritizedInput {
+        session_id: SessionId::new("session-1"),
+        message_index: 1,
+        message_id: Some(MessageId::new("message-2")),
+        text: text.to_owned(),
+        priority: InputPriority::High,
+        reason: PriorityReason::ExplicitCorrection,
     }
 }
 
@@ -94,4 +107,68 @@ fn replaces_only_the_evidence_owned_by_a_changed_source() {
         .replace_source_candidates(&fingerprint, &[])
         .expect("changed analysis");
     assert!(database.load_candidates().expect("load").is_empty());
+}
+
+#[test]
+fn preserves_analysis_state_for_unchanged_inputs_and_requeues_changed_text() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let source_path = directory.path().join("session.jsonl");
+    std::fs::write(&source_path, "{}\n").expect("source");
+    let fingerprint = SourceFingerprint::from_path(&source_path, 1).expect("fingerprint");
+    let mut database = Database::in_memory().expect("database");
+    let first = input("Always use pnpm.");
+
+    database
+        .replace_source_analysis(&fingerprint, &[], std::slice::from_ref(&first), 1)
+        .expect("index input");
+    let pending = database.pending_analysis_inputs(1).expect("pending");
+    assert_eq!(pending.len(), 1);
+    database
+        .mark_analysis_inputs_analyzed(&[pending[0].id.clone()])
+        .expect("complete input");
+
+    database
+        .replace_source_analysis(&fingerprint, &[], std::slice::from_ref(&first), 1)
+        .expect("reindex unchanged input");
+    assert!(
+        database
+            .pending_analysis_inputs(1)
+            .expect("pending")
+            .is_empty()
+    );
+
+    let changed = input("Always use pnpm and Corepack.");
+    database
+        .replace_source_analysis(&fingerprint, &[], &[changed], 1)
+        .expect("reindex changed input");
+    assert_eq!(
+        database.pending_analysis_inputs(1).expect("pending").len(),
+        1
+    );
+}
+
+#[test]
+fn a_new_analysis_version_requeues_unchanged_inputs() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let source_path = directory.path().join("session.jsonl");
+    std::fs::write(&source_path, "{}\n").expect("source");
+    let fingerprint = SourceFingerprint::from_path(&source_path, 1).expect("fingerprint");
+    let mut database = Database::in_memory().expect("database");
+    let input = input("Always use pnpm.");
+
+    database
+        .replace_source_analysis(&fingerprint, &[], std::slice::from_ref(&input), 1)
+        .expect("index input");
+    let pending = database.pending_analysis_inputs(1).expect("pending");
+    database
+        .mark_analysis_inputs_analyzed(&[pending[0].id.clone()])
+        .expect("complete input");
+    database
+        .replace_source_analysis(&fingerprint, &[], &[input], 2)
+        .expect("upgrade analysis");
+
+    assert_eq!(
+        database.pending_analysis_inputs(2).expect("pending").len(),
+        1
+    );
 }

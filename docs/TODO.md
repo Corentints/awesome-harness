@@ -64,7 +64,7 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Faire entrer chaque véritable message utilisateur dans l'index d'analyse, même sans marqueur explicite.
 - [x] Écarter les enveloppes techniques, contenus injectés, doublons et messages vides avant toute inférence.
 - [x] Remplacer le filtre binaire par une priorité explicable : correction, préférence durable, ambiguïté ou contenu probablement ponctuel.
-- [ ] Persister le hash et l'état d'analyse de chaque message afin de ne retraiter que les entrées nouvelles ou modifiées.
+- [x] Persister le hash et l'état d'analyse de chaque message afin de ne retraiter que les entrées nouvelles ou modifiées.
 - [ ] Traiter les messages par lots ordonnés sous un budget configurable de caractères ou de tokens.
 - [ ] Intégrer les suggestions sémantiques du provider aux candidats persistés avec leurs preuves, au lieu de seulement les afficher.
 - [ ] Implémenter `ClaudeCliProvider` derrière la même interface que `CodexCliProvider`.

@@ -1,5 +1,5 @@
 use crate::{
-    analysis::{CorrectionCandidate, CorrectionEvidence},
+    analysis::{CorrectionCandidate, CorrectionEvidence, InputPriority, PrioritizedInput},
     domain::{MessageId, RuleScope, SessionId, Visibility},
 };
 use chrono::{DateTime, Utc};
@@ -13,7 +13,13 @@ use std::{
 };
 use thiserror::Error;
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingAnalysisInput {
+    pub id: String,
+    pub input: PrioritizedInput,
+}
 
 pub struct Database {
     connection: Connection,
@@ -197,7 +203,7 @@ impl Database {
                 params![3, Utc::now().to_rfc3339()],
             )?;
         }
-        if version < SCHEMA_VERSION {
+        if version < 4 {
             self.connection.execute_batch(
                 "ALTER TABLE review_decisions ADD COLUMN last_confirmed_at TEXT;
                  ALTER TABLE review_decisions ADD COLUMN last_used_at TEXT;
@@ -205,9 +211,37 @@ impl Database {
             )?;
             self.connection.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
-                params![SCHEMA_VERSION, Utc::now().to_rfc3339()],
+                params![4, Utc::now().to_rfc3339()],
             )?;
         }
+        if version < SCHEMA_VERSION {
+            self.migrate_analysis_inputs()?;
+        }
+        Ok(())
+    }
+
+    fn migrate_analysis_inputs(&self) -> Result<(), StorageError> {
+        self.connection.execute_batch(
+            "CREATE TABLE analysis_inputs (
+                 id TEXT PRIMARY KEY,
+                 source_path TEXT NOT NULL,
+                 session_id TEXT NOT NULL,
+                 message_index INTEGER NOT NULL,
+                 message_id TEXT,
+                 user_text TEXT NOT NULL,
+                 priority TEXT NOT NULL,
+                 reason TEXT NOT NULL,
+                 analysis_version INTEGER NOT NULL,
+                 status TEXT NOT NULL,
+                 updated_at TEXT NOT NULL
+             );
+             CREATE INDEX analysis_inputs_pending
+             ON analysis_inputs(status, analysis_version, priority);",
+        )?;
+        self.connection.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+            params![SCHEMA_VERSION, Utc::now().to_rfc3339()],
+        )?;
         Ok(())
     }
 
@@ -328,8 +362,38 @@ impl Database {
         source: &SourceFingerprint,
         candidates: &[CorrectionCandidate],
     ) -> Result<(), StorageError> {
+        self.replace_source_analysis(source, candidates, &[], 1)
+    }
+
+    /// Atomically replaces deterministic evidence and indexes genuine user
+    /// inputs. Inputs unchanged at the same analysis version keep their state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when values cannot fit in `SQLite` or the transaction
+    /// cannot be committed.
+    pub fn replace_source_analysis(
+        &mut self,
+        source: &SourceFingerprint,
+        candidates: &[CorrectionCandidate],
+        inputs: &[PrioritizedInput],
+        analysis_version: u32,
+    ) -> Result<(), StorageError> {
         let source_path = source.path.to_string_lossy();
         let size = i64::try_from(source.size).map_err(|_| StorageError::IntegerOverflow)?;
+        let existing_states = {
+            let mut statement = self.connection.prepare(
+                "SELECT id, analysis_version, status FROM analysis_inputs WHERE source_path = ?1",
+            )?;
+            statement
+                .query_map([&source_path], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        (row.get::<_, u32>(1)?, row.get::<_, String>(2)?),
+                    ))
+                })?
+                .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?
+        };
         let transaction = self.connection.transaction()?;
         transaction.execute(
             "DELETE FROM evidence WHERE source_path = ?1",
@@ -368,6 +432,37 @@ impl Database {
             [],
         )?;
         transaction.execute(
+            "DELETE FROM analysis_inputs WHERE source_path = ?1",
+            [&source_path],
+        )?;
+        for input in inputs {
+            let id = analysis_input_id(source.path.as_path(), input);
+            let status = existing_states
+                .get(&id)
+                .filter(|(version, _)| *version == analysis_version)
+                .map_or("pending", |(_, status)| status.as_str());
+            transaction.execute(
+                "INSERT INTO analysis_inputs(
+                     id, source_path, session_id, message_index, message_id, user_text,
+                     priority, reason, analysis_version, status, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    id,
+                    source_path,
+                    input.session_id.as_str(),
+                    i64::try_from(input.message_index)
+                        .map_err(|_| StorageError::IntegerOverflow)?,
+                    input.message_id.as_ref().map(MessageId::as_str),
+                    input.text,
+                    serde_json::to_string(&input.priority)?,
+                    serde_json::to_string(&input.reason)?,
+                    analysis_version,
+                    status,
+                    Utc::now().to_rfc3339(),
+                ],
+            )?;
+        }
+        transaction.execute(
             "INSERT INTO sources(path, size, modified_ns, content_hash, parser_version, processed_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(path) DO UPDATE SET size=excluded.size, modified_ns=excluded.modified_ns,
@@ -382,6 +477,77 @@ impl Database {
                 Utc::now().to_rfc3339(),
             ],
         )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Loads inputs that have not completed the current semantic analysis.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot decode a stored input.
+    pub fn pending_analysis_inputs(
+        &self,
+        analysis_version: u32,
+    ) -> Result<Vec<PendingAnalysisInput>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, session_id, message_index, message_id, user_text, priority, reason
+             FROM analysis_inputs
+             WHERE status = 'pending' AND analysis_version = ?1
+             ORDER BY CASE priority
+                 WHEN '\"high\"' THEN 0
+                 WHEN '\"medium\"' THEN 1
+                 ELSE 2
+             END, updated_at, id",
+        )?;
+        statement
+            .query_map([analysis_version], |row| {
+                let message_index = usize::try_from(row.get::<_, i64>(2)?)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(2, i64::MAX))?;
+                let priority = serde_json::from_str::<InputPriority>(&row.get::<_, String>(5)?)
+                    .map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            5,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                let reason = serde_json::from_str(&row.get::<_, String>(6)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        6,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+                Ok(PendingAnalysisInput {
+                    id: row.get(0)?,
+                    input: PrioritizedInput {
+                        session_id: SessionId::new(row.get::<_, String>(1)?),
+                        message_index,
+                        message_id: row.get::<_, Option<String>>(3)?.map(MessageId::new),
+                        text: row.get(4)?,
+                        priority,
+                        reason,
+                    },
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
+    }
+
+    /// Marks one successfully inferred batch as complete.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot update the inputs.
+    pub fn mark_analysis_inputs_analyzed(&mut self, ids: &[String]) -> Result<(), StorageError> {
+        let transaction = self.connection.transaction()?;
+        for id in ids {
+            transaction.execute(
+                "UPDATE analysis_inputs SET status = 'analyzed', updated_at = ?2 WHERE id = ?1",
+                params![id, Utc::now().to_rfc3339()],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -554,6 +720,19 @@ pub fn candidate_id(text: &str) -> String {
         "candidate_{}",
         &blake3::hash(text.as_bytes()).to_hex()[..16]
     )
+}
+
+fn analysis_input_id(source_path: &Path, input: &PrioritizedInput) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(source_path.to_string_lossy().as_bytes());
+    hasher.update(input.session_id.as_str().as_bytes());
+    if let Some(message_id) = &input.message_id {
+        hasher.update(message_id.as_str().as_bytes());
+    } else {
+        hasher.update(&input.message_index.to_le_bytes());
+    }
+    hasher.update(input.text.as_bytes());
+    format!("input_{}", &hasher.finalize().to_hex()[..16])
 }
 
 fn parse_optional_date(value: Option<String>) -> Result<Option<DateTime<Utc>>, StorageError> {

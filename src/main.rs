@@ -1,7 +1,6 @@
 use agentctx::{
     analysis::{
-        InputPriority, PrioritizedInput, find_corrections, infer_scope, prioritize_user_inputs,
-        score_candidate,
+        InputPriority, find_corrections, infer_scope, prioritize_user_inputs, score_candidate,
     },
     artifacts::{self, PlannedArtifact},
     config::{Config, default_user_config_path},
@@ -16,6 +15,8 @@ use agentctx::{
     repository,
     storage::{Database, DecisionStatus, ReviewDecision, SourceFingerprint, candidate_id},
 };
+
+const SEMANTIC_ANALYSIS_VERSION: u32 = 1;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::{
@@ -289,7 +290,7 @@ fn analyze(arguments: &AnalyzeArgs) -> Result<()> {
 
     let mut processed = 0;
     let mut skipped = 0;
-    let mut inputs = Vec::new();
+    let mut indexed_inputs = 0;
     for (source, parser_version) in roots {
         let result = process_changed_sessions(
             source.as_ref(),
@@ -300,7 +301,7 @@ fn analyze(arguments: &AnalyzeArgs) -> Result<()> {
         )?;
         processed += result.processed;
         skipped += result.skipped;
-        inputs.extend(result.inputs);
+        indexed_inputs += result.indexed_inputs;
     }
     let candidates = database.load_candidates()?;
     println!("Analysis complete for {}", project.name);
@@ -308,8 +309,16 @@ fn analyze(arguments: &AnalyzeArgs) -> Result<()> {
     println!("  Processed sessions: {processed}");
     println!("  Unchanged sessions: {skipped}");
     println!("  Candidate rules: {}", candidates.len());
+    println!("  Indexed user inputs: {indexed_inputs}");
     if provider_name != "none" {
-        run_semantic_inference(provider_name, &project, &inputs, arguments.batch_size)?;
+        let pending = database.pending_analysis_inputs(SEMANTIC_ANALYSIS_VERSION)?;
+        run_semantic_inference(
+            provider_name,
+            &project,
+            &mut database,
+            &pending,
+            arguments.batch_size,
+        )?;
     }
     Ok(())
 }
@@ -317,18 +326,19 @@ fn analyze(arguments: &AnalyzeArgs) -> Result<()> {
 fn run_semantic_inference(
     provider_name: &str,
     project: &Project,
-    inputs: &[PrioritizedInput],
+    database: &mut Database,
+    pending: &[agentctx::storage::PendingAnalysisInput],
     batch_size: usize,
 ) -> Result<()> {
     let provider: Box<dyn InferenceProvider> = match provider_name {
         "codex-cli" => Box::new(CodexCliProvider::new(&project.root)),
         other => anyhow::bail!("unknown inference provider: {other}"),
     };
-    let segments = inputs
+    let segments = pending
         .iter()
-        .map(|input| InferenceSegment {
-            message_id: input.message_id.clone(),
-            text: input.text.clone(),
+        .map(|pending| InferenceSegment {
+            message_id: pending.input.message_id.clone(),
+            text: pending.input.text.clone(),
         })
         .collect::<Vec<_>>();
     let character_count = segments
@@ -339,22 +349,31 @@ fn run_semantic_inference(
         "  Provider: {provider_name} ({} user inputs, {character_count} characters before redaction)",
         segments.len()
     );
-    let high = inputs
+    let high = pending
         .iter()
-        .filter(|input| input.priority == InputPriority::High)
+        .filter(|pending| pending.input.priority == InputPriority::High)
         .count();
-    let medium = inputs
+    let medium = pending
         .iter()
-        .filter(|input| input.priority == InputPriority::Medium)
+        .filter(|pending| pending.input.priority == InputPriority::Medium)
         .count();
     println!(
         "  Input priority: {high} high, {medium} medium, {} low",
-        inputs.len().saturating_sub(high + medium)
+        pending.len().saturating_sub(high + medium)
     );
     let mut redactor = Redactor::new();
     let mut inferred = Vec::new();
-    for request in batches(&segments, batch_size) {
+    for (request, pending_batch) in batches(&segments, batch_size)
+        .into_iter()
+        .zip(pending.chunks(batch_size.max(1)))
+    {
         inferred.extend(infer_redacted(provider.as_ref(), &request, &mut redactor)?.rules);
+        database.mark_analysis_inputs_analyzed(
+            &pending_batch
+                .iter()
+                .map(|pending| pending.id.clone())
+                .collect::<Vec<_>>(),
+        )?;
     }
     println!("  Redacted values: {}", redactor.replacement_count());
     println!("  Semantic suggestions: {}", inferred.len());
@@ -384,7 +403,7 @@ fn analysis_roots(arguments: &AnalyzeArgs) -> Vec<(Box<dyn SessionSource>, u32)>
 struct ProcessingResult {
     processed: usize,
     skipped: usize,
-    inputs: Vec<PrioritizedInput>,
+    indexed_inputs: usize,
 }
 
 fn process_changed_sessions(
@@ -396,7 +415,7 @@ fn process_changed_sessions(
 ) -> Result<ProcessingResult> {
     let mut processed = 0;
     let mut skipped = 0;
-    let mut inputs = Vec::new();
+    let mut indexed_inputs = 0;
     for reference in source.discover()? {
         let fingerprint = SourceFingerprint::from_path(&reference.path, parser_version)?;
         if database.is_source_current(&fingerprint)? {
@@ -414,17 +433,24 @@ fn process_changed_sessions(
         } else {
             Vec::new()
         };
-        if included {
-            inputs.extend(prioritize_user_inputs(&session));
-        }
-        database.replace_source_candidates(&fingerprint, &candidates)?;
+        let inputs = if included {
+            prioritize_user_inputs(&session)
+        } else {
+            Vec::new()
+        };
+        indexed_inputs += inputs.len();
+        database.replace_source_analysis(
+            &fingerprint,
+            &candidates,
+            &inputs,
+            SEMANTIC_ANALYSIS_VERSION,
+        )?;
         processed += 1;
     }
-    inputs.sort_by_key(|input| std::cmp::Reverse(input.priority));
     Ok(ProcessingResult {
         processed,
         skipped,
-        inputs,
+        indexed_inputs,
     })
 }
 
