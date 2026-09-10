@@ -8,8 +8,8 @@ use agentctx::{
     domain::NormalizedSession,
     ingest::{ClaudeSessionSource, CodexSessionSource, SessionSource},
     llm::{
-        CodexCliProvider, InferenceProvider, InferenceSegment, batches_with_character_budget,
-        infer_redacted,
+        ClaudeCliProvider, CodexCliProvider, InferenceProvider, InferenceSegment,
+        batches_with_character_budget, infer_redacted,
     },
     optimize,
     privacy::Redactor,
@@ -91,7 +91,7 @@ struct AnalyzeArgs {
     project: PathBuf,
     #[arg(long)]
     database: Option<PathBuf>,
-    /// Semantic inference provider (`none` or `codex-cli`).
+    /// Semantic inference provider (`none`, `codex-cli` or `claude-cli`).
     #[arg(long)]
     provider: Option<String>,
     /// Maximum number of user inputs sent in one inference request.
@@ -342,6 +342,7 @@ fn run_semantic_inference(
 ) -> Result<()> {
     let provider: Box<dyn InferenceProvider> = match provider_name {
         "codex-cli" => Box::new(CodexCliProvider::new(&project.root)),
+        "claude-cli" => Box::new(ClaudeCliProvider::new(&project.root)),
         other => anyhow::bail!("unknown inference provider: {other}"),
     };
     let segments = pending

@@ -87,6 +87,8 @@ codex = true
 
 Les valeurs projet spécialisent les valeurs utilisateur sans pouvoir désactiver silencieusement les protections de confidentialité.
 
+Les providers actuellement disponibles sont `none`, `codex-cli` et `claude-cli`. Les deux providers CLI fonctionnent en mode non interactif, sans outils et sans persistance de session ; ils peuvent néanmoins communiquer avec leur service distant et nécessitent donc l'opt-in de confidentialité.
+
 ## Codes de sortie
 
 La convention exacte reste à figer, mais les catégories doivent distinguer : succès, erreur de configuration, source illisible, provider indisponible, validation LLM échouée, conflit d'écriture et violations détectées par un futur `check`.

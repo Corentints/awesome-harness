@@ -67,7 +67,7 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Persister le hash et l'état d'analyse de chaque message afin de ne retraiter que les entrées nouvelles ou modifiées.
 - [x] Traiter les messages par lots ordonnés sous un budget configurable de caractères ou de tokens.
 - [ ] Intégrer les suggestions sémantiques du provider aux candidats persistés avec leurs preuves, au lieu de seulement les afficher.
-- [ ] Implémenter `ClaudeCliProvider` derrière la même interface que `CodexCliProvider`.
+- [x] Implémenter `ClaudeCliProvider` derrière la même interface que `CodexCliProvider`.
 - [ ] Ajouter un mode `provider = "auto"` qui détecte les CLI installées et authentifiées.
 - [ ] Définir un ordre de fallback Claude/Codex explicite, sans contourner le consentement d'inférence distante.
 - [ ] Distinguer indisponibilité, authentification, quota et rate limit ; conserver le travail et permettre une reprise sans boucle infinie.
