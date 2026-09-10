@@ -1,5 +1,6 @@
 use super::{
-    InferenceError, InferenceProvider, InferenceRequest, InferenceResponse, output_schema,
+    InferenceError, InferenceOutcome, InferenceProvider, InferenceRequest, InferenceUsage,
+    output_schema,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -31,7 +32,7 @@ impl ClaudeCliProvider {
 }
 
 impl InferenceProvider for ClaudeCliProvider {
-    fn infer(&self, request: &InferenceRequest) -> Result<InferenceResponse, InferenceError> {
+    fn infer(&self, request: &InferenceRequest) -> Result<InferenceOutcome, InferenceError> {
         let schema = serde_json::to_string(&output_schema())?;
         let prompt = super::prompt(request)?;
         let mut child = Command::new(&self.executable)
@@ -71,11 +72,24 @@ struct ClaudeOutput {
     is_error: bool,
     result: Option<String>,
     structured_output: Option<Value>,
+    total_cost_usd: Option<f64>,
+    duration_ms: Option<u64>,
+    num_turns: Option<u64>,
+    usage: Option<ClaudeUsage>,
 }
 
-fn parse_output(bytes: &[u8]) -> Result<InferenceResponse, InferenceError> {
+#[derive(Deserialize)]
+struct ClaudeUsage {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+}
+
+fn parse_output(bytes: &[u8]) -> Result<InferenceOutcome, InferenceError> {
     if let Ok(response) = serde_json::from_slice(bytes) {
-        return Ok(response);
+        return Ok(InferenceOutcome {
+            response,
+            usage: InferenceUsage::default(),
+        });
     }
     let output = serde_json::from_slice::<ClaudeOutput>(bytes)?;
     if output.is_error {
@@ -85,15 +99,25 @@ fn parse_output(bytes: &[u8]) -> Result<InferenceResponse, InferenceError> {
                 .unwrap_or_else(|| "Claude returned an error".to_owned()),
         ));
     }
-    if let Some(structured) = output.structured_output {
-        return Ok(serde_json::from_value(structured)?);
-    }
-    if let Some(result) = output.result {
-        return Ok(serde_json::from_str(&result)?);
-    }
-    Err(InferenceError::Provider(
-        "Claude response contains no structured output".to_owned(),
-    ))
+    let response = if let Some(structured) = output.structured_output {
+        serde_json::from_value(structured)?
+    } else if let Some(result) = output.result {
+        serde_json::from_str(&result)?
+    } else {
+        return Err(InferenceError::Provider(
+            "Claude response contains no structured output".to_owned(),
+        ));
+    };
+    Ok(InferenceOutcome {
+        response,
+        usage: InferenceUsage {
+            input_tokens: output.usage.as_ref().and_then(|usage| usage.input_tokens),
+            output_tokens: output.usage.as_ref().and_then(|usage| usage.output_tokens),
+            cost_usd: output.total_cost_usd,
+            duration_ms: output.duration_ms,
+            turns: output.num_turns,
+        },
+    })
 }
 
 #[cfg(test)]
@@ -107,10 +131,20 @@ mod tests {
             "subtype":"success",
             "is_error":false,
             "structured_output":{"rules":[]},
-            "result":""
+            "result":"",
+            "total_cost_usd":0.004,
+            "duration_ms":1200,
+            "num_turns":1,
+            "usage":{"input_tokens":40,"output_tokens":12}
         }"#;
 
-        assert_eq!(parse_output(output).expect("valid output").rules, []);
+        let outcome = parse_output(output).expect("valid output");
+        assert_eq!(outcome.response.rules, []);
+        assert_eq!(outcome.usage.input_tokens, Some(40));
+        assert_eq!(outcome.usage.output_tokens, Some(12));
+        assert_eq!(outcome.usage.cost_usd, Some(0.004));
+        assert_eq!(outcome.usage.duration_ms, Some(1200));
+        assert_eq!(outcome.usage.turns, Some(1));
     }
 
     #[test]
@@ -121,7 +155,10 @@ mod tests {
             "result":"{\"rules\":[]}"
         }"#;
 
-        assert_eq!(parse_output(output).expect("valid output").rules, []);
+        assert_eq!(
+            parse_output(output).expect("valid output").response.rules,
+            []
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use agentctx::{
     domain::{MessageId, NormalizedSession},
     ingest::{ClaudeSessionSource, CodexSessionSource, SessionSource},
     llm::{
-        ClaudeCliProvider, CodexCliProvider, InferenceProvider, InferenceSegment,
+        ClaudeCliProvider, CodexCliProvider, InferenceProvider, InferenceSegment, InferenceUsage,
         batches_with_character_budget, cli_provider_status, infer_redacted,
     },
     optimize,
@@ -380,6 +380,8 @@ fn run_semantic_inference(
     );
     let mut redactor = Redactor::new();
     let mut inferred = Vec::new();
+    let mut usage = InferenceUsage::default();
+    let mut provider_batches = BTreeMap::<String, usize>::new();
     let plan = batches_with_character_budget(&segments, batch_size, max_batch_characters);
     println!(
         "  Inference batches: {} planned, {} oversized inputs deferred",
@@ -387,12 +389,21 @@ fn run_semantic_inference(
         plan.deferred_indices.len()
     );
     for batch in plan.batches {
-        let (response, used_provider) =
+        let (outcome, used_provider) =
             infer_with_fallback(&providers, &batch.request, &mut redactor)?;
         println!("    Completed batch with {used_provider}");
-        let candidates = inferred_candidates(&response, &batch.segment_indices, pending, &segments);
+        *provider_batches
+            .entry(used_provider.to_owned())
+            .or_default() += 1;
+        usage.add(&outcome.usage);
+        let candidates = inferred_candidates(
+            &outcome.response,
+            &batch.segment_indices,
+            pending,
+            &segments,
+        );
         database.merge_candidates(&candidates)?;
-        inferred.extend(response.rules);
+        inferred.extend(outcome.response.rules);
         database.mark_analysis_inputs_analyzed(
             &batch
                 .segment_indices
@@ -402,6 +413,10 @@ fn run_semantic_inference(
         )?;
     }
     println!("  Redacted values: {}", redactor.replacement_count());
+    for (provider, count) in provider_batches {
+        println!("  Provider batches: {provider}={count}");
+    }
+    print_inference_usage(&usage);
     println!("  Semantic suggestions: {}", inferred.len());
     for rule in inferred {
         println!(
@@ -411,6 +426,30 @@ fn run_semantic_inference(
         );
     }
     Ok(())
+}
+
+fn print_inference_usage(usage: &InferenceUsage) {
+    if usage.is_empty() {
+        println!("  Provider usage: not reported by the CLI");
+        return;
+    }
+    let mut values = Vec::new();
+    if let Some(tokens) = usage.input_tokens {
+        values.push(format!("{tokens} input tokens"));
+    }
+    if let Some(tokens) = usage.output_tokens {
+        values.push(format!("{tokens} output tokens"));
+    }
+    if let Some(cost) = usage.cost_usd {
+        values.push(format!("${cost:.4}"));
+    }
+    if let Some(duration) = usage.duration_ms {
+        values.push(format!("{duration} ms"));
+    }
+    if let Some(turns) = usage.turns {
+        values.push(format!("{turns} turns"));
+    }
+    println!("  Provider usage: {}", values.join(", "));
 }
 
 fn inferred_candidates(
@@ -514,7 +553,7 @@ fn infer_with_fallback<'a>(
     providers: &'a [NamedProvider],
     request: &agentctx::llm::InferenceRequest,
     redactor: &mut Redactor,
-) -> Result<(agentctx::llm::InferenceResponse, &'a str)> {
+) -> Result<(agentctx::llm::InferenceOutcome, &'a str)> {
     for (index, provider) in providers.iter().enumerate() {
         match infer_redacted(provider.provider.as_ref(), request, redactor) {
             Ok(response) => return Ok((response, &provider.name)),

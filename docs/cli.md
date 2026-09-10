@@ -90,6 +90,8 @@ Les valeurs projet spécialisent les valeurs utilisateur sans pouvoir désactive
 
 Les providers actuellement disponibles sont `none`, `auto`, `codex-cli` et `claude-cli`. En mode `auto`, seules les CLI installées et authentifiées sont retenues dans l'ordre de `provider_order`. Un lot bascule vers la suivante uniquement après une erreur opérationnelle identifiable comme une indisponibilité, un défaut d'authentification, un quota ou un rate limit. Les deux providers CLI fonctionnent en mode non interactif, sans outils et sans persistance de session ; ils peuvent néanmoins communiquer avec leur service distant et nécessitent donc l'opt-in de confidentialité.
 
+Le rapport indique le nombre d'inputs et de caractères, la distribution des priorités, les lots différés et le provider réellement utilisé par lot. Les tokens, le coût, la durée et le nombre de tours sont agrégés lorsqu'ils sont exposés par la CLI ; l'absence de métrique est affichée explicitement.
+
 ## Codes de sortie
 
 La convention exacte reste à figer, mais les catégories doivent distinguer : succès, erreur de configuration, source illisible, provider indisponible, validation LLM échouée, conflit d'écriture et violations détectées par un futur `check`.

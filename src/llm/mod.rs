@@ -44,6 +44,44 @@ pub struct InferenceResponse {
     pub rules: Vec<InferredRule>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InferenceUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cost_usd: Option<f64>,
+    pub duration_ms: Option<u64>,
+    pub turns: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InferenceOutcome {
+    pub response: InferenceResponse,
+    pub usage: InferenceUsage,
+}
+
+impl InferenceUsage {
+    pub fn add(&mut self, other: &Self) {
+        add_optional(&mut self.input_tokens, other.input_tokens);
+        add_optional(&mut self.output_tokens, other.output_tokens);
+        add_optional(&mut self.duration_ms, other.duration_ms);
+        add_optional(&mut self.turns, other.turns);
+        if let Some(value) = other.cost_usd {
+            *self.cost_usd.get_or_insert(0.0) += value;
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+fn add_optional(total: &mut Option<u64>, value: Option<u64>) {
+    if let Some(value) = value {
+        *total.get_or_insert(0) += value;
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InferredRule {
@@ -60,7 +98,7 @@ pub trait InferenceProvider {
     /// # Errors
     ///
     /// Returns an error when the provider fails or returns an invalid response.
-    fn infer(&self, request: &InferenceRequest) -> Result<InferenceResponse, InferenceError>;
+    fn infer(&self, request: &InferenceRequest) -> Result<InferenceOutcome, InferenceError>;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -108,7 +146,7 @@ pub fn infer_redacted(
     provider: &dyn InferenceProvider,
     request: &InferenceRequest,
     redactor: &mut Redactor,
-) -> Result<InferenceResponse, InferenceError> {
+) -> Result<InferenceOutcome, InferenceError> {
     let request = InferenceRequest {
         segments: request
             .segments
@@ -244,7 +282,7 @@ impl FakeProvider {
 }
 
 impl InferenceProvider for FakeProvider {
-    fn infer(&self, request: &InferenceRequest) -> Result<InferenceResponse, InferenceError> {
+    fn infer(&self, request: &InferenceRequest) -> Result<InferenceOutcome, InferenceError> {
         self.recorded
             .lock()
             .map_err(|_| InferenceError::Provider("fake provider lock is poisoned".to_owned()))?
@@ -260,7 +298,10 @@ impl InferenceProvider for FakeProvider {
             })
             .map(|(_, rule)| rule.clone())
             .collect();
-        Ok(InferenceResponse { rules })
+        Ok(InferenceOutcome {
+            response: InferenceResponse { rules },
+            usage: InferenceUsage::default(),
+        })
     }
 }
 

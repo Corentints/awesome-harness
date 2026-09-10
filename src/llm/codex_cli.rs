@@ -1,5 +1,6 @@
 use super::{
-    InferenceError, InferenceProvider, InferenceRequest, InferenceResponse, output_schema,
+    InferenceError, InferenceOutcome, InferenceProvider, InferenceRequest, InferenceUsage,
+    output_schema,
 };
 use std::{
     io::Write,
@@ -29,7 +30,7 @@ impl CodexCliProvider {
 }
 
 impl InferenceProvider for CodexCliProvider {
-    fn infer(&self, request: &InferenceRequest) -> Result<InferenceResponse, InferenceError> {
+    fn infer(&self, request: &InferenceRequest) -> Result<InferenceOutcome, InferenceError> {
         let directory = tempfile::tempdir()?;
         let schema_path = directory.path().join("schema.json");
         let output_path = directory.path().join("output.json");
@@ -66,7 +67,10 @@ impl InferenceProvider for CodexCliProvider {
             return Err(super::classify_cli_failure("Codex", &output.stderr));
         }
         let response = std::fs::read_to_string(output_path)?;
-        Ok(serde_json::from_str(&response)?)
+        Ok(InferenceOutcome {
+            response: serde_json::from_str(&response)?,
+            usage: InferenceUsage::default(),
+        })
     }
 }
 
