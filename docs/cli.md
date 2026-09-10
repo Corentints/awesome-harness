@@ -74,6 +74,7 @@ max_context_tokens = 2500
 
 [llm]
 provider = "codex-cli"
+provider_order = ["codex-cli", "claude-cli"]
 max_batch_characters = 24000
 
 [privacy]
@@ -87,7 +88,7 @@ codex = true
 
 Les valeurs projet spécialisent les valeurs utilisateur sans pouvoir désactiver silencieusement les protections de confidentialité.
 
-Les providers actuellement disponibles sont `none`, `codex-cli` et `claude-cli`. Les deux providers CLI fonctionnent en mode non interactif, sans outils et sans persistance de session ; ils peuvent néanmoins communiquer avec leur service distant et nécessitent donc l'opt-in de confidentialité.
+Les providers actuellement disponibles sont `none`, `auto`, `codex-cli` et `claude-cli`. En mode `auto`, seules les CLI installées et authentifiées sont retenues dans l'ordre de `provider_order`. Un lot bascule vers la suivante uniquement après une erreur opérationnelle identifiable comme une indisponibilité, un défaut d'authentification, un quota ou un rate limit. Les deux providers CLI fonctionnent en mode non interactif, sans outils et sans persistance de session ; ils peuvent néanmoins communiquer avec leur service distant et nécessitent donc l'opt-in de confidentialité.
 
 ## Codes de sortie
 

@@ -9,7 +9,7 @@ use agentctx::{
     ingest::{ClaudeSessionSource, CodexSessionSource, SessionSource},
     llm::{
         ClaudeCliProvider, CodexCliProvider, InferenceProvider, InferenceSegment,
-        batches_with_character_budget, infer_redacted,
+        batches_with_character_budget, cli_provider_status, infer_redacted,
     },
     optimize,
     privacy::Redactor,
@@ -91,7 +91,7 @@ struct AnalyzeArgs {
     project: PathBuf,
     #[arg(long)]
     database: Option<PathBuf>,
-    /// Semantic inference provider (`none`, `codex-cli` or `claude-cli`).
+    /// Semantic inference provider (`none`, `auto`, `codex-cli` or `claude-cli`).
     #[arg(long)]
     provider: Option<String>,
     /// Maximum number of user inputs sent in one inference request.
@@ -327,6 +327,7 @@ fn analyze(arguments: &AnalyzeArgs) -> Result<()> {
             arguments
                 .batch_characters
                 .unwrap_or(config.llm.max_batch_characters),
+            &config.llm.provider_order,
         )?;
     }
     Ok(())
@@ -339,12 +340,9 @@ fn run_semantic_inference(
     pending: &[agentctx::storage::PendingAnalysisInput],
     batch_size: usize,
     max_batch_characters: usize,
+    provider_order: &[String],
 ) -> Result<()> {
-    let provider: Box<dyn InferenceProvider> = match provider_name {
-        "codex-cli" => Box::new(CodexCliProvider::new(&project.root)),
-        "claude-cli" => Box::new(ClaudeCliProvider::new(&project.root)),
-        other => anyhow::bail!("unknown inference provider: {other}"),
-    };
+    let providers = inference_providers(provider_name, provider_order, project)?;
     let segments = pending
         .iter()
         .map(|pending| InferenceSegment {
@@ -381,7 +379,10 @@ fn run_semantic_inference(
         plan.deferred_indices.len()
     );
     for batch in plan.batches {
-        inferred.extend(infer_redacted(provider.as_ref(), &batch.request, &mut redactor)?.rules);
+        let (response, used_provider) =
+            infer_with_fallback(&providers, &batch.request, &mut redactor)?;
+        println!("    Completed batch with {used_provider}");
+        inferred.extend(response.rules);
         database.mark_analysis_inputs_analyzed(
             &batch
                 .segment_indices
@@ -400,6 +401,66 @@ fn run_semantic_inference(
         );
     }
     Ok(())
+}
+
+struct NamedProvider {
+    name: String,
+    provider: Box<dyn InferenceProvider>,
+}
+
+fn inference_providers(
+    requested: &str,
+    provider_order: &[String],
+    project: &Project,
+) -> Result<Vec<NamedProvider>> {
+    let names = if requested == "auto" {
+        let available = provider_order
+            .iter()
+            .filter(|name| cli_provider_status(name).authenticated)
+            .cloned()
+            .collect::<Vec<_>>();
+        if available.is_empty() {
+            anyhow::bail!(
+                "no authenticated CLI provider found; checked: {}",
+                provider_order.join(", ")
+            );
+        }
+        available
+    } else {
+        vec![requested.to_owned()]
+    };
+    names
+        .into_iter()
+        .map(|name| {
+            let provider: Box<dyn InferenceProvider> = match name.as_str() {
+                "codex-cli" => Box::new(CodexCliProvider::new(&project.root)),
+                "claude-cli" => Box::new(ClaudeCliProvider::new(&project.root)),
+                other => anyhow::bail!("unknown inference provider: {other}"),
+            };
+            Ok(NamedProvider { name, provider })
+        })
+        .collect()
+}
+
+fn infer_with_fallback<'a>(
+    providers: &'a [NamedProvider],
+    request: &agentctx::llm::InferenceRequest,
+    redactor: &mut Redactor,
+) -> Result<(agentctx::llm::InferenceResponse, &'a str)> {
+    for (index, provider) in providers.iter().enumerate() {
+        match infer_redacted(provider.provider.as_ref(), request, redactor) {
+            Ok(response) => return Ok((response, &provider.name)),
+            Err(error) if error.allows_fallback() && index + 1 < providers.len() => {
+                eprintln!(
+                    "  Provider {} unavailable for this batch ({error}); trying {}",
+                    provider.name,
+                    providers[index + 1].name
+                );
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!("provider list is validated as non-empty")
 }
 
 fn analysis_roots(arguments: &AnalyzeArgs) -> Vec<(Box<dyn SessionSource>, u32)> {

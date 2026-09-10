@@ -7,7 +7,12 @@ pub use codex_cli::CodexCliProvider;
 use crate::{domain::MessageId, privacy::Redactor};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, sync::Mutex};
+use std::{
+    collections::BTreeMap,
+    io,
+    process::{Command, Stdio},
+    sync::Mutex,
+};
 use thiserror::Error;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -56,6 +61,42 @@ pub trait InferenceProvider {
     ///
     /// Returns an error when the provider fails or returns an invalid response.
     fn infer(&self, request: &InferenceRequest) -> Result<InferenceResponse, InferenceError>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CliProviderStatus {
+    pub installed: bool,
+    pub authenticated: bool,
+}
+
+#[must_use]
+pub fn cli_provider_status(provider: &str) -> CliProviderStatus {
+    let (executable, arguments): (&str, &[&str]) = match provider {
+        "codex-cli" => ("codex", &["login", "status"]),
+        "claude-cli" => ("claude", &["auth", "status"]),
+        _ => {
+            return CliProviderStatus {
+                installed: false,
+                authenticated: false,
+            };
+        }
+    };
+    match Command::new(executable)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        Ok(status) => CliProviderStatus {
+            installed: true,
+            authenticated: status.success(),
+        },
+        Err(_) => CliProviderStatus {
+            installed: false,
+            authenticated: false,
+        },
+    }
 }
 
 /// Redacts every segment before handing the request to a provider.
@@ -225,12 +266,77 @@ impl InferenceProvider for FakeProvider {
 
 #[derive(Debug, Error)]
 pub enum InferenceError {
+    #[error("provider unavailable: {0}")]
+    Unavailable(String),
+    #[error("provider authentication failed: {0}")]
+    Authentication(String),
+    #[error("provider quota exhausted: {0}")]
+    Quota(String),
+    #[error("provider rate limited: {0}")]
+    RateLimit(String),
     #[error("provider failed: {0}")]
     Provider(String),
     #[error("provider returned invalid JSON: {0}")]
     InvalidResponse(#[from] serde_json::Error),
     #[error("provider filesystem error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+impl InferenceError {
+    #[must_use]
+    pub fn allows_fallback(&self) -> bool {
+        matches!(
+            self,
+            Self::Unavailable(_) | Self::Authentication(_) | Self::Quota(_) | Self::RateLimit(_)
+        )
+    }
+}
+
+pub(crate) fn cli_spawn_error(provider: &str, error: io::Error) -> InferenceError {
+    if error.kind() == io::ErrorKind::NotFound {
+        InferenceError::Unavailable(format!("{provider} executable was not found"))
+    } else {
+        InferenceError::Io(error)
+    }
+}
+
+pub(crate) fn classify_cli_failure(provider: &str, stderr: &[u8]) -> InferenceError {
+    let message = String::from_utf8_lossy(stderr);
+    let normalized = message.to_lowercase();
+    let detail = concise_error(provider, &message);
+    if ["rate limit", "too many requests", "429"]
+        .iter()
+        .any(|marker| normalized.contains(marker))
+    {
+        InferenceError::RateLimit(detail)
+    } else if ["quota", "usage limit", "limit reached", "out of credits"]
+        .iter()
+        .any(|marker| normalized.contains(marker))
+    {
+        InferenceError::Quota(detail)
+    } else if [
+        "not logged in",
+        "authentication",
+        "unauthorized",
+        "login required",
+        "401",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+    {
+        InferenceError::Authentication(detail)
+    } else {
+        InferenceError::Provider(detail)
+    }
+}
+
+fn concise_error(provider: &str, message: &str) -> String {
+    let message = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if message.is_empty() {
+        format!("{provider} exited unsuccessfully")
+    } else {
+        message.chars().take(500).collect()
+    }
 }
 
 #[cfg(test)]
@@ -307,6 +413,20 @@ mod tests {
         assert_eq!(
             schema["properties"]["rules"]["items"]["additionalProperties"],
             false
+        );
+    }
+
+    #[test]
+    fn classifies_only_operational_failures_for_fallback() {
+        assert!(classify_cli_failure("Codex", b"429 rate limit").allows_fallback());
+        assert!(classify_cli_failure("Claude", b"usage limit reached").allows_fallback());
+        assert!(classify_cli_failure("Claude", b"not logged in").allows_fallback());
+        assert!(!classify_cli_failure("Codex", b"internal parse failure").allows_fallback());
+        assert!(
+            !InferenceError::InvalidResponse(
+                serde_json::from_str::<Value>("not json").expect_err("invalid JSON")
+            )
+            .allows_fallback()
         );
     }
 }

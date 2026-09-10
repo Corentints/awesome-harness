@@ -32,6 +32,7 @@ pub struct AnalysisConfig {
 #[serde(default)]
 pub struct LlmConfig {
     pub provider: String,
+    pub provider_order: Vec<String>,
     pub max_batch_characters: usize,
 }
 
@@ -70,6 +71,7 @@ impl Default for LlmConfig {
     fn default() -> Self {
         Self {
             provider: "none".to_owned(),
+            provider_order: vec!["codex-cli".to_owned(), "claude-cli".to_owned()],
             max_batch_characters: 24_000,
         }
     }
@@ -213,5 +215,6 @@ mod tests {
         assert!(!config.privacy.allow_remote_inference);
         assert!(config.privacy.redact_secrets);
         assert_eq!(config.llm.max_batch_characters, 24_000);
+        assert_eq!(config.llm.provider_order, ["codex-cli", "claude-cli"]);
     }
 }

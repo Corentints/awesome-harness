@@ -68,9 +68,9 @@ Cette liste traduit la roadmap en tâches d'implémentation. Une case n'est coch
 - [x] Traiter les messages par lots ordonnés sous un budget configurable de caractères ou de tokens.
 - [ ] Intégrer les suggestions sémantiques du provider aux candidats persistés avec leurs preuves, au lieu de seulement les afficher.
 - [x] Implémenter `ClaudeCliProvider` derrière la même interface que `CodexCliProvider`.
-- [ ] Ajouter un mode `provider = "auto"` qui détecte les CLI installées et authentifiées.
-- [ ] Définir un ordre de fallback Claude/Codex explicite, sans contourner le consentement d'inférence distante.
-- [ ] Distinguer indisponibilité, authentification, quota et rate limit ; conserver le travail et permettre une reprise sans boucle infinie.
+- [x] Ajouter un mode `provider = "auto"` qui détecte les CLI installées et authentifiées.
+- [x] Définir un ordre de fallback Claude/Codex explicite, sans contourner le consentement d'inférence distante.
+- [x] Distinguer indisponibilité, authentification, quota et rate limit ; conserver le travail et permettre une reprise sans boucle infinie.
 - [ ] Afficher le provider choisi, les volumes, les lots traités et l'usage retourné par la CLI lorsqu'il est disponible.
 - [ ] Documenter que les providers CLI évitent une clé API et une facturation API séparée, mais consomment les quotas de l'abonnement associé.
 - [ ] Comparer sur un corpus réel le rappel, les faux positifs et le coût entre filtrage par mots-clés et analyse priorisée de tous les inputs.

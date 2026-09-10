@@ -50,7 +50,8 @@ impl InferenceProvider for ClaudeCliProvider {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .map_err(|error| super::cli_spawn_error("Claude", error))?;
         child
             .stdin
             .as_mut()
@@ -58,9 +59,7 @@ impl InferenceProvider for ClaudeCliProvider {
             .write_all(prompt.as_bytes())?;
         let output = child.wait_with_output()?;
         if !output.status.success() {
-            return Err(InferenceError::Provider(
-                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            ));
+            return Err(super::classify_cli_failure("Claude", &output.stderr));
         }
         parse_output(&output.stdout)
     }

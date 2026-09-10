@@ -54,7 +54,8 @@ impl InferenceProvider for CodexCliProvider {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .map_err(|error| super::cli_spawn_error("Codex", error))?;
         child
             .stdin
             .as_mut()
@@ -62,9 +63,7 @@ impl InferenceProvider for CodexCliProvider {
             .write_all(prompt.as_bytes())?;
         let output = child.wait_with_output()?;
         if !output.status.success() {
-            return Err(InferenceError::Provider(
-                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            ));
+            return Err(super::classify_cli_failure("Codex", &output.stderr));
         }
         let response = std::fs::read_to_string(output_path)?;
         Ok(serde_json::from_str(&response)?)
