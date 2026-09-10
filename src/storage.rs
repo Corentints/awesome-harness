@@ -13,11 +13,12 @@ use std::{
 };
 use thiserror::Error;
 
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingAnalysisInput {
     pub id: String,
+    pub source_path: PathBuf,
     pub input: PrioritizedInput,
 }
 
@@ -214,8 +215,18 @@ impl Database {
                 params![4, Utc::now().to_rfc3339()],
             )?;
         }
-        if version < SCHEMA_VERSION {
+        if version < 5 {
             self.migrate_analysis_inputs()?;
+        }
+        if version < SCHEMA_VERSION {
+            self.connection.execute(
+                "ALTER TABLE analysis_inputs ADD COLUMN project_path TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+            self.connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                params![SCHEMA_VERSION, Utc::now().to_rfc3339()],
+            )?;
         }
         Ok(())
     }
@@ -240,7 +251,7 @@ impl Database {
         )?;
         self.connection.execute(
             "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
-            params![SCHEMA_VERSION, Utc::now().to_rfc3339()],
+            params![5, Utc::now().to_rfc3339()],
         )?;
         Ok(())
     }
@@ -350,6 +361,52 @@ impl Database {
         Ok(())
     }
 
+    /// Merges inferred candidates and evidence without deleting evidence that
+    /// was produced deterministically or by an earlier inference batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot persist the candidates atomically.
+    pub fn merge_candidates(
+        &mut self,
+        candidates: &[CorrectionCandidate],
+    ) -> Result<(), StorageError> {
+        let transaction = self.connection.transaction()?;
+        for candidate in candidates {
+            let id = candidate_id(&candidate.canonical_text);
+            transaction.execute(
+                "INSERT INTO candidates(id, canonical_text, occurrences, updated_at)
+                 VALUES (?1, ?2, 0, ?3)
+                 ON CONFLICT(id) DO UPDATE SET canonical_text=excluded.canonical_text,
+                 updated_at=excluded.updated_at",
+                params![id, candidate.canonical_text, Utc::now().to_rfc3339()],
+            )?;
+            for evidence in &candidate.evidence {
+                transaction.execute(
+                    "INSERT OR IGNORE INTO evidence(candidate_id, session_id, message_id, user_text, preceding_agent_text, source_path, project_path)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        id,
+                        evidence.session_id.as_str(),
+                        evidence.message_id.as_ref().map(MessageId::as_str),
+                        evidence.user_text,
+                        evidence.preceding_agent_text,
+                        evidence.source_path.as_ref().map(|path| path.to_string_lossy()),
+                        evidence.project_path.as_ref().map(|path| path.to_string_lossy()),
+                    ],
+                )?;
+            }
+            transaction.execute(
+                "UPDATE candidates SET occurrences = (
+                     SELECT COUNT(*) FROM evidence WHERE candidate_id = ?1
+                 ) WHERE id = ?1",
+                [&id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// Replaces the extracted evidence associated with one changed source and
     /// records its fingerprint in the same transaction.
     ///
@@ -431,37 +488,14 @@ impl Database {
              )",
             [],
         )?;
-        transaction.execute(
-            "DELETE FROM analysis_inputs WHERE source_path = ?1",
-            [&source_path],
+        replace_analysis_inputs(
+            &transaction,
+            source.path.as_path(),
+            &source_path,
+            inputs,
+            analysis_version,
+            &existing_states,
         )?;
-        for input in inputs {
-            let id = analysis_input_id(source.path.as_path(), input);
-            let status = existing_states
-                .get(&id)
-                .filter(|(version, _)| *version == analysis_version)
-                .map_or("pending", |(_, status)| status.as_str());
-            transaction.execute(
-                "INSERT INTO analysis_inputs(
-                     id, source_path, session_id, message_index, message_id, user_text,
-                     priority, reason, analysis_version, status, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    id,
-                    source_path,
-                    input.session_id.as_str(),
-                    i64::try_from(input.message_index)
-                        .map_err(|_| StorageError::IntegerOverflow)?,
-                    input.message_id.as_ref().map(MessageId::as_str),
-                    input.text,
-                    serde_json::to_string(&input.priority)?,
-                    serde_json::to_string(&input.reason)?,
-                    analysis_version,
-                    status,
-                    Utc::now().to_rfc3339(),
-                ],
-            )?;
-        }
         transaction.execute(
             "INSERT INTO sources(path, size, modified_ns, content_hash, parser_version, processed_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -491,7 +525,7 @@ impl Database {
         analysis_version: u32,
     ) -> Result<Vec<PendingAnalysisInput>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, session_id, message_index, message_id, user_text, priority, reason
+            "SELECT id, source_path, session_id, message_index, message_id, user_text, priority, reason, project_path
              FROM analysis_inputs
              WHERE status = 'pending' AND analysis_version = ?1
              ORDER BY CASE priority
@@ -502,30 +536,34 @@ impl Database {
         )?;
         statement
             .query_map([analysis_version], |row| {
-                let message_index = usize::try_from(row.get::<_, i64>(2)?)
-                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(2, i64::MAX))?;
-                let priority = serde_json::from_str::<InputPriority>(&row.get::<_, String>(5)?)
+                let message_index = usize::try_from(row.get::<_, i64>(3)?)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(3, i64::MAX))?;
+                let priority = serde_json::from_str::<InputPriority>(&row.get::<_, String>(6)?)
                     .map_err(|error| {
                         rusqlite::Error::FromSqlConversionFailure(
-                            5,
+                            6,
                             rusqlite::types::Type::Text,
                             Box::new(error),
                         )
                     })?;
-                let reason = serde_json::from_str(&row.get::<_, String>(6)?).map_err(|error| {
+                let reason = serde_json::from_str(&row.get::<_, String>(7)?).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        6,
+                        7,
                         rusqlite::types::Type::Text,
                         Box::new(error),
                     )
                 })?;
+                let project_path = row.get::<_, String>(8)?;
                 Ok(PendingAnalysisInput {
                     id: row.get(0)?,
+                    source_path: PathBuf::from(row.get::<_, String>(1)?),
                     input: PrioritizedInput {
-                        session_id: SessionId::new(row.get::<_, String>(1)?),
+                        session_id: SessionId::new(row.get::<_, String>(2)?),
+                        project_path: (!project_path.is_empty())
+                            .then(|| PathBuf::from(project_path)),
                         message_index,
-                        message_id: row.get::<_, Option<String>>(3)?.map(MessageId::new),
-                        text: row.get(4)?,
+                        message_id: row.get::<_, Option<String>>(4)?.map(MessageId::new),
+                        text: row.get(5)?,
                         priority,
                         reason,
                     },
@@ -712,6 +750,51 @@ impl Database {
         }
         Ok(accepted)
     }
+}
+
+fn replace_analysis_inputs(
+    transaction: &rusqlite::Transaction<'_>,
+    source: &Path,
+    source_path: &str,
+    inputs: &[PrioritizedInput],
+    analysis_version: u32,
+    existing_states: &std::collections::BTreeMap<String, (u32, String)>,
+) -> Result<(), StorageError> {
+    transaction.execute(
+        "DELETE FROM analysis_inputs WHERE source_path = ?1",
+        [source_path],
+    )?;
+    for input in inputs {
+        let id = analysis_input_id(source, input);
+        let status = existing_states
+            .get(&id)
+            .filter(|(version, _)| *version == analysis_version)
+            .map_or("pending", |(_, status)| status.as_str());
+        transaction.execute(
+            "INSERT INTO analysis_inputs(
+                 id, source_path, session_id, message_index, message_id, user_text,
+                 priority, reason, analysis_version, status, updated_at, project_path
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                id,
+                source_path,
+                input.session_id.as_str(),
+                i64::try_from(input.message_index).map_err(|_| StorageError::IntegerOverflow)?,
+                input.message_id.as_ref().map(MessageId::as_str),
+                input.text,
+                serde_json::to_string(&input.priority)?,
+                serde_json::to_string(&input.reason)?,
+                analysis_version,
+                status,
+                Utc::now().to_rfc3339(),
+                input
+                    .project_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy()),
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 #[must_use]

@@ -24,6 +24,7 @@ fn candidate() -> CorrectionCandidate {
 fn input(text: &str) -> PrioritizedInput {
     PrioritizedInput {
         session_id: SessionId::new("session-1"),
+        project_path: Some("/projects/example".into()),
         message_index: 1,
         message_id: Some(MessageId::new("message-2")),
         text: text.to_owned(),
@@ -171,4 +172,25 @@ fn a_new_analysis_version_requeues_unchanged_inputs() {
         database.pending_analysis_inputs(2).expect("pending").len(),
         1
     );
+}
+
+#[test]
+fn merges_inferred_evidence_without_losing_existing_evidence() {
+    let mut database = Database::in_memory().expect("database");
+    let first = candidate();
+    database
+        .upsert_candidates(std::slice::from_ref(&first))
+        .expect("deterministic candidate");
+    let mut inferred = candidate();
+    inferred.evidence[0].session_id = SessionId::new("session-2");
+    inferred.evidence[0].message_id = Some(MessageId::new("message-3"));
+    inferred.evidence[0].user_text = "Please remember to use pnpm.".to_owned();
+
+    database
+        .merge_candidates(&[inferred])
+        .expect("merge inferred candidate");
+
+    let stored = database.load_candidates().expect("load");
+    assert_eq!(stored[0].occurrences, 2);
+    assert_eq!(stored[0].evidence.len(), 2);
 }

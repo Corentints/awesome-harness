@@ -1,11 +1,12 @@
 use agentctx::{
     analysis::{
-        InputPriority, find_corrections, infer_scope, prioritize_user_inputs, score_candidate,
+        CorrectionCandidate, CorrectionEvidence, InputPriority, find_corrections, infer_scope,
+        prioritize_user_inputs, score_candidate,
     },
     artifacts::{self, PlannedArtifact},
     config::{Config, default_user_config_path},
     doctor,
-    domain::NormalizedSession,
+    domain::{MessageId, NormalizedSession},
     ingest::{ClaudeSessionSource, CodexSessionSource, SessionSource},
     llm::{
         ClaudeCliProvider, CodexCliProvider, InferenceProvider, InferenceSegment,
@@ -23,6 +24,7 @@ const SEMANTIC_ANALYSIS_VERSION: u32 = 1;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::{
+    collections::BTreeMap,
     io::{self, Write},
     path::{Path, PathBuf},
 };
@@ -346,7 +348,13 @@ fn run_semantic_inference(
     let segments = pending
         .iter()
         .map(|pending| InferenceSegment {
-            message_id: pending.input.message_id.clone(),
+            message_id: Some(
+                pending
+                    .input
+                    .message_id
+                    .clone()
+                    .unwrap_or_else(|| MessageId::new(&pending.id)),
+            ),
             text: pending.input.text.clone(),
         })
         .collect::<Vec<_>>();
@@ -382,6 +390,8 @@ fn run_semantic_inference(
         let (response, used_provider) =
             infer_with_fallback(&providers, &batch.request, &mut redactor)?;
         println!("    Completed batch with {used_provider}");
+        let candidates = inferred_candidates(&response, &batch.segment_indices, pending, &segments);
+        database.merge_candidates(&candidates)?;
         inferred.extend(response.rules);
         database.mark_analysis_inputs_analyzed(
             &batch
@@ -401,6 +411,64 @@ fn run_semantic_inference(
         );
     }
     Ok(())
+}
+
+fn inferred_candidates(
+    response: &agentctx::llm::InferenceResponse,
+    segment_indices: &[usize],
+    pending: &[agentctx::storage::PendingAnalysisInput],
+    segments: &[InferenceSegment],
+) -> Vec<CorrectionCandidate> {
+    let mut grouped = BTreeMap::<String, CorrectionCandidate>::new();
+    for rule in &response.rules {
+        let text = rule.text.trim();
+        if text.is_empty() || !(0.0..=1.0).contains(&rule.confidence) {
+            continue;
+        }
+        let evidence = rule
+            .evidence_message_ids
+            .iter()
+            .filter_map(|message_id| {
+                segment_indices.iter().find_map(|index| {
+                    (segments[*index].message_id.as_ref() == Some(message_id)).then(|| {
+                        let source = &pending[*index];
+                        CorrectionEvidence {
+                            source_path: Some(source.source_path.clone()),
+                            project_path: source.input.project_path.clone(),
+                            session_id: source.input.session_id.clone(),
+                            message_id: source.input.message_id.clone(),
+                            user_text: source.input.text.clone(),
+                            preceding_agent_text: None,
+                        }
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        if evidence.is_empty() {
+            continue;
+        }
+        grouped
+            .entry(text.to_lowercase())
+            .and_modify(|candidate| candidate.evidence.extend(evidence.clone()))
+            .or_insert_with(|| CorrectionCandidate {
+                canonical_text: text.to_owned(),
+                occurrences: 0,
+                evidence,
+            });
+    }
+    grouped
+        .into_values()
+        .map(|mut candidate| {
+            candidate.evidence.sort_by(|left, right| {
+                left.session_id
+                    .cmp(&right.session_id)
+                    .then_with(|| left.message_id.cmp(&right.message_id))
+            });
+            candidate.evidence.dedup();
+            candidate.occurrences = candidate.evidence.len();
+            candidate
+        })
+        .collect()
 }
 
 struct NamedProvider {
@@ -772,4 +840,60 @@ fn paths_match_project(path: &Path, project: &Project) -> bool {
         || path
             .file_name()
             .is_some_and(|name| name == project.root.file_name().unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentctx::{
+        analysis::{PrioritizedInput, PriorityReason},
+        domain::SessionId,
+        llm::{InferenceResponse, InferredRule},
+        storage::PendingAnalysisInput,
+    };
+
+    #[test]
+    fn inferred_candidates_require_evidence_from_the_current_batch() {
+        let pending = vec![PendingAnalysisInput {
+            id: "input_123".to_owned(),
+            source_path: "/sessions/one.jsonl".into(),
+            input: PrioritizedInput {
+                session_id: SessionId::new("session-1"),
+                project_path: Some("/projects/example".into()),
+                message_index: 0,
+                message_id: None,
+                text: "Could you keep functions small?".to_owned(),
+                priority: InputPriority::Low,
+                reason: PriorityReason::OrdinaryRequest,
+            },
+        }];
+        let segments = vec![InferenceSegment {
+            message_id: Some(MessageId::new("input_123")),
+            text: pending[0].input.text.clone(),
+        }];
+        let response = InferenceResponse {
+            rules: vec![
+                InferredRule {
+                    text: "Keep functions small.".to_owned(),
+                    kind: "coding_convention".to_owned(),
+                    scope: "project".to_owned(),
+                    confidence: 0.8,
+                    evidence_message_ids: vec![MessageId::new("input_123")],
+                },
+                InferredRule {
+                    text: "Use an imaginary tool.".to_owned(),
+                    kind: "tool_preference".to_owned(),
+                    scope: "project".to_owned(),
+                    confidence: 0.9,
+                    evidence_message_ids: vec![MessageId::new("hallucinated")],
+                },
+            ],
+        };
+
+        let candidates = inferred_candidates(&response, &[0], &pending, &segments);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].canonical_text, "Keep functions small.");
+        assert_eq!(candidates[0].evidence[0].session_id.as_str(), "session-1");
+    }
 }

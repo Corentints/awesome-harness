@@ -1,6 +1,6 @@
 use crate::domain::{MessageId, NormalizedSession, Role, SessionId};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, path::PathBuf};
 
 const TECHNICAL_ONLY_PREFIXES: &[&str] = &[
     "transcript delta start",
@@ -47,6 +47,7 @@ pub enum PriorityReason {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrioritizedInput {
     pub session_id: SessionId,
+    pub project_path: Option<PathBuf>,
     pub message_index: usize,
     pub message_id: Option<MessageId>,
     pub text: String,
@@ -73,6 +74,7 @@ pub fn prioritize_user_inputs(session: &NormalizedSession) -> Vec<PrioritizedInp
             let (priority, reason) = priority(&text);
             Some(PrioritizedInput {
                 session_id: session.id.clone(),
+                project_path: session.project.clone(),
                 message_index,
                 message_id: message.id.clone(),
                 text,
