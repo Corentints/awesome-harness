@@ -1,30 +1,8 @@
+use super::{is_durable_signal, prioritize_user_inputs};
 use crate::domain::{MessageId, NormalizedSession, Role, SessionId};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-const STRONG_SIGNALS: &[&str] = &[
-    "always",
-    "never",
-    "instead",
-    "from now on",
-    "don't ",
-    "do not ",
-    "toujours",
-    "jamais",
-    "plutôt que",
-    "a l'avenir",
-    "à l'avenir",
-    "n'utilise pas",
-    "ne pas ",
-    "je t'ai déjà dit",
-];
-const TECHNICAL_ENVELOPES: &[&str] = &[
-    "transcript delta start",
-    "treat the transcript delta",
-    "<environment_context>",
-    "<permissions instructions>",
-    "# context from my ide setup",
-];
 const CORRECTION_PREFIXES: &[&str] = &["no,", "non,", "no:", "non:", "je t'ai déjà dit,"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,17 +28,16 @@ pub fn find_corrections(sessions: &[NormalizedSession]) -> Vec<CorrectionCandida
     let mut grouped = BTreeMap::<String, CorrectionCandidate>::new();
 
     for session in sessions {
-        for (index, message) in session.messages.iter().enumerate() {
-            if message.role != Role::User || !is_signal(&message.content) {
-                continue;
-            }
-
-            let canonical_text = canonicalize(&message.content);
+        for input in prioritize_user_inputs(session)
+            .into_iter()
+            .filter(is_durable_signal)
+        {
+            let canonical_text = canonicalize(&input.text);
             let key = normalize_for_grouping(&canonical_text);
             if key.is_empty() {
                 continue;
             }
-            let preceding_agent_text = session.messages[..index]
+            let preceding_agent_text = session.messages[..input.message_index]
                 .iter()
                 .rev()
                 .find(|candidate| candidate.role == Role::Assistant)
@@ -69,8 +46,8 @@ pub fn find_corrections(sessions: &[NormalizedSession]) -> Vec<CorrectionCandida
                 source_path: session.origin.clone(),
                 project_path: session.project.clone(),
                 session_id: session.id.clone(),
-                message_id: message.id.clone(),
-                user_text: message.content.clone(),
+                message_id: input.message_id,
+                user_text: input.text,
                 preceding_agent_text,
             };
 
@@ -96,39 +73,6 @@ pub fn find_corrections(sessions: &[NormalizedSession]) -> Vec<CorrectionCandida
             .then_with(|| left.canonical_text.cmp(&right.canonical_text))
     });
     candidates
-}
-
-fn is_signal(text: &str) -> bool {
-    if text.chars().count() > 500 {
-        return false;
-    }
-    let normalized = text.trim().to_lowercase();
-    if TECHNICAL_ENVELOPES
-        .iter()
-        .any(|envelope| normalized.contains(envelope))
-    {
-        return false;
-    }
-    let without_politeness = normalized
-        .strip_prefix("please ")
-        .or_else(|| normalized.strip_prefix("s'il te plaît "))
-        .or_else(|| normalized.strip_prefix("stp "))
-        .unwrap_or(&normalized);
-    STRONG_SIGNALS
-        .iter()
-        .any(|signal| normalized.contains(signal))
-        || [
-            "no,",
-            "non,",
-            "no:",
-            "non:",
-            "prefer ",
-            "préfère ",
-            "use ",
-            "utilise ",
-        ]
-        .iter()
-        .any(|prefix| without_politeness.starts_with(prefix))
 }
 
 fn canonicalize(text: &str) -> String {
